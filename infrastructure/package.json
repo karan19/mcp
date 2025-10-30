@@ -1,0 +1,27 @@
+{
+  "name": "nexusnote-mcp-infra",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "mcp-infra": "bin/mcp-infra.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.140.0",
+    "@types/node": "^20.14.9",
+    "source-map-support": "^0.5.21",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.140.0",
+    "constructs": "^10.3.0",
+    "dotenv": "^16.4.5"
+  }
+}
