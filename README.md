@@ -109,7 +109,16 @@ Outputs include the Application Load Balancer DNS name and a `ws://` URL you can
 - Add CI/CD to build and push the image automatically (ECR + CDK deploy).
 - Expand the test suite to cover each MCP tool’s error handling and API quota limits.
 
+## CI / CD Workflow
+
+A GitHub Actions workflow (`.github/workflows/deploy.yml`) builds the MCP server, compiles the CDK app, and runs `cdk deploy` against the target environment whenever changes land on `main` or when triggered manually. Configure the following repository secrets before enabling the workflow:
+
+- `AWS_DEPLOY_ROLE_ARN` – IAM role ARN that the workflow should assume for deployments. The role must have permissions to perform CDK asset uploads and stack updates.
+- `SERPAPI_SECRET_NAME` – Name of the AWS Secrets Manager secret that stores the SerpAPI key expected by the stack.
+
+The workflow uses Node.js 20, caches npm installs, and deploys the `NexusNoteMcpStack` stack by default. Adjust the `STACK_NAME` or `AWS_REGION` env vars in the workflow file if your environment differs.
+
 ## TODO
 
-- [ ] Automate MCP image builds and CDK deploys through CI so the service stays in sync with NexusNote releases.
+- [x] Automate MCP image builds and CDK deploys through CI so the service stays in sync with NexusNote releases.
 - [ ] Tighten network access when exposing beyond internal integrations (e.g., restrict the ALB security group or front with a private link).

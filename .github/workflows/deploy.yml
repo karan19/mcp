@@ -1,0 +1,62 @@
+name: Build and Deploy MCP
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  NODE_VERSION: '20'
+  STACK_NAME: NexusNoteMcpStack
+  AWS_REGION: us-east-1
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Build MCP server
+        run: npm run build
+
+      - name: Install infrastructure dependencies
+        run: npm ci
+        working-directory: infrastructure
+
+      - name: Build CDK app
+        run: npm run build
+        working-directory: infrastructure
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: nexusnote-mcp-ci
+
+      - name: Deploy CDK stack
+        env:
+          SERPAPI_SECRET_NAME: ${{ secrets.SERPAPI_SECRET_NAME }}
+          STACK_NAME: ${{ env.STACK_NAME }}
+          MCP_LOG_LEVEL: info
+        run: npx cdk deploy --require-approval never $STACK_NAME
+        working-directory: infrastructure
+
+      - name: Output Deployment Metadata
+        run: npx cdk list
+        working-directory: infrastructure
