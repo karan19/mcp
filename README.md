@@ -1,124 +1,72 @@
-# NexusNote MCP Server Scaffold
+# MCP Server
 
-This directory contains an initial scaffold for the Anthropic Model Context Protocol (MCP) server that will power debate search/citation tooling. The goal is to let the debate feature call a local MCP endpoint while we iterate, and later move this folder into its own repository for dedicated deployment (ECS/App Runner, etc.).
+Small MCP-compatible WebSocket server with tools for web, Wikipedia, arXiv, and AWS Docs search. Use the commands below to run locally, build a container, or deploy to AWS.
 
-## Folder layout
-
-```
-mcp/
-  Dockerfile                 # production container image (multi-stage)
-  .dockerignore              # excludes local artefacts from the image build
-  package.json               # npm scripts and dependencies
-  tsconfig.json              # TypeScript compiler options
-  src/                       # MCP server source
-    index.ts                 # entry point
-    config/env.ts            # environment variable loader
-    server/mcp-server.ts     # WebSocket server implementing MCP protocol
-    tools/                   # MCP tool definitions and handlers
-  infrastructure/            # Standalone AWS CDK app (Option A)
-    package.json
-    tsconfig.json
-    cdk.json
-    bin/mcp-infra.ts
-    lib/mcp-stack.ts
-```
-
-## Running locally
+## Local Development
 
 ```bash
 cd mcp
 npm install
-npm run dev
-# or build + run Node output
-npm run build
-npm run start:websocket
+export SERPAPI_KEY=<your-serpapi-key>
+npm run dev            # hot-reload server
+# npm run build        # compile to dist/
+# npm run start:websocket   # run compiled output
 ```
 
-By default the server listens on `0.0.0.0:8080`. Configure `MCP_HOST` and `MCP_PORT` if you need different bindings.
+The server listens on `0.0.0.0:8080`. Modify `src/config/env.ts` if you need different bindings.
 
-### Required environment variables
-
-| Variable          | Description                                             |
-|-------------------|---------------------------------------------------------|
-| `SERPAPI_KEY`     | API key for SerpAPI (used by `search.web`).             |
-| `LOG_LEVEL`       | Optional Pino log level (`info` by default).            |
-
-All other tools (Wikipedia, arXiv, AWS docs) rely on public APIs and do not require keys.
-
-## Container image
-
-A production-ready `Dockerfile` is provided and builds a multi-stage Node.js 20 image. Example build command:
+## Docker Image
 
 ```bash
 cd mcp
-docker build -t nexusnote-mcp .
+docker build -t mcp-server .
 ```
 
-The runtime stage installs only production dependencies and boots `dist/index.js`.
+## AWS Deployment (manual)
 
-## Option A — Embedded CDK infrastructure
+1. **Set deployment config** – edit `infrastructure/bin/mcp-infra.ts`:
+   - Replace `REPLACE_WITH_AWS_ACCOUNT_ID` with your AWS account ID.
+   - Adjust CPU, memory, desired task count, or port in the `CONFIG` object if needed.
+   - The stack expects a Secrets Manager entry named `nexusnote/mcp/search-api` that contains your SerpAPI key.
 
-The `infrastructure/` folder contains a standalone AWS CDK v2 application that deploys the MCP server on ECS Fargate behind an Application Load Balancer. The stack builds the container image directly from the `mcp/` directory, provisions a VPC with a NAT gateway, and wires Secrets Manager to the runtime (`SERPAPI_KEY`).
-
-### Prerequisites
-
-1. Bootstrap the target AWS environment if you have not already:
+2. **Bootstrap (first time per account/region)**
    ```bash
    cd mcp/infrastructure
    npm install
    npx cdk bootstrap
    ```
-2. Store your SerpAPI key in AWS Secrets Manager (string secret is expected), for example:
+
+3. **Create the SerpAPI secret (once)**
    ```bash
    aws secretsmanager create-secret \
-     --name nexusnote/mcp/serpapi \
+     --name nexusnote/mcp/search-api \
      --secret-string "<YOUR_SERPAPI_KEY>"
    ```
-3. Ensure Docker is available locally so CDK can build the image asset.
 
-### Deploy
+4. **Deploy** – make sure Docker is running locally.
+   ```bash
+   cd mcp/infrastructure
+   npm install        # safe to re-run
+   npm run build      # compile CDK app
+   npm run synth      # optional: inspect CloudFormation
+   npm run deploy     # deploys the McpStack stack
+   ```
 
-```bash
-cd mcp/infrastructure
-npm install                # one-time
-npm run build
-export SERPAPI_SECRET_NAME=nexusnote/mcp/serpapi
-# Optional overrides:
-# export STACK_NAME=NexusNoteMcpStack
-# export MCP_DESIRED_COUNT=2
-# export MCP_FARGATE_CPU=1024
-# export MCP_FARGATE_MEMORY=2048
-# export MCP_LOG_LEVEL=debug
-npm run synth
-npm run deploy
-```
+   The deploy step builds a Docker image locally. If Docker isn’t running you’ll see `Cannot connect to the Docker daemon ...`. After a successful deploy, note the load balancer DNS name; the WebSocket endpoint is `ws://<ALB-DNS>:8080` unless you changed the port.
 
-Outputs include the Application Load Balancer DNS name and a `ws://` URL you can plug into the debate backend.
+5. **Teardown (optional)**
+   ```bash
+   cd mcp/infrastructure
+   npm run destroy
+   ```
 
-### Stack behaviour
+## Useful Commands Summary
 
-- VPC with two AZs and one NAT gateway (required for outbound internet calls to SerpAPI, Wikipedia, etc.).
-- Fargate service with configurable CPU, memory, desired count, and port (defaults: 512 CPU, 1024 MiB, 1 task, port 8080).
-- Secrets Manager integration for `SERPAPI_KEY`.
-- CloudWatch Logs group `/nexusnote/mcp/{stackName}` retaining logs for 30 days.
-- ALB health checks accept HTTP status codes `200-499`, allowing the WebSocket server’s 426 upgrade response to pass.
-
-## Next steps
-
-- Wire the debate backend to call the deployed MCP WebSocket endpoint.
-- Add CI/CD to build and push the image automatically (ECR + CDK deploy).
-- Expand the test suite to cover each MCP tool’s error handling and API quota limits.
-
-## CI / CD Workflow
-
-A GitHub Actions workflow (`.github/workflows/deploy.yml`) builds the MCP server, compiles the CDK app, and runs `cdk deploy` against the target environment whenever changes land on `main` or when triggered manually. Configure the following repository secrets before enabling the workflow:
-
-- `AWS_DEPLOY_ROLE_ARN` – IAM role ARN that the workflow should assume for deployments. The role must have permissions to perform CDK asset uploads and stack updates.
-- `SERPAPI_SECRET_NAME` – Name of the AWS Secrets Manager secret that stores the SerpAPI key expected by the stack.
-
-The workflow uses Node.js 20, caches npm installs, and deploys the `NexusNoteMcpStack` stack by default. Adjust the `STACK_NAME` or `AWS_REGION` env vars in the workflow file if your environment differs.
-
-## TODO
-
-- [x] Automate MCP image builds and CDK deploys through CI so the service stays in sync with NexusNote releases.
-- [ ] Tighten network access when exposing beyond internal integrations (e.g., restrict the ALB security group or front with a private link).
+| Purpose              | Command(s) |
+|----------------------|------------|
+| Local dev            | `npm run dev` |
+| Build TypeScript     | `npm run build` |
+| Start compiled server| `npm run start:websocket` |
+| Build Docker image   | `docker build -t mcp-server .` |
+| Deploy to AWS        | `npm run build && npm run deploy` (from `infrastructure/`) |
+| Destroy AWS stack    | `npm run destroy` (from `infrastructure/`) |

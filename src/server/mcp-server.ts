@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import pino from 'pino';
 import { toolDefinitions, toolRegistry } from '../tools';
 
-const logger = pino({ name: 'mcp-server', level: process.env.LOG_LEVEL || 'info' });
+const logger = pino({ name: 'mcp-server', level: 'info' });
 
 interface ServerOptions {
   host: string;

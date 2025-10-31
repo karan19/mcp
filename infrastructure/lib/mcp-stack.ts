@@ -89,7 +89,7 @@ export class McpStack extends Stack {
     );
 
     const logGroup = new logs.LogGroup(this, 'LogGroup', {
-      logGroupName: `/nexusnote/mcp/${this.stackName}`,
+      logGroupName: `/mcp/service/${this.stackName}`,
       retention: logs.RetentionDays.ONE_MONTH,
     });
 
