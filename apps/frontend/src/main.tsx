@@ -1,16 +1,16 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import { configureAmplify } from './config/amplify';
+import App from './App';
 import './index.css';
-import App from './App.tsx';
 
-configureAmplify();
+const container = document.getElementById('root');
 
-createRoot(document.getElementById('root')!).render(
+if (!container) {
+  throw new Error('Failed to find the root element.');
+}
+
+createRoot(container).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </StrictMode>
+    <App />
+  </StrictMode>,
 );
