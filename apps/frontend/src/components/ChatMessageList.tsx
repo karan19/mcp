@@ -38,6 +38,7 @@ function ToolCallList({ toolCalls }: { toolCalls: ToolCall[] }) {
       {toolCalls.map((call, index) => (
         <div key={index} className="tool-call-item">
           <div className="tool-call-title">
+            <span className="tool-call-chip">Tool</span>
             <span className="tool-call-name">{call.toolName}</span>
             <span className="tool-call-args">{JSON.stringify(call.arguments, null, 2)}</span>
           </div>

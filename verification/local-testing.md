@@ -16,6 +16,16 @@ Set SerpAPI Key
 ---------------
 1. export SERPAPI_KEY=<your-serpapi-key>
 
+Set Authentication And AI Environment
+-------------------------------------
+1. export COGNITO_REGION=<aws-region>
+2. export COGNITO_USER_POOL_ID=<user-pool-id>
+3. export COGNITO_USER_POOL_CLIENT_ID=<app-client-id>
+4. export BEDROCK_REGION=<aws-region>
+5. export BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+6. (optional) export BEDROCK_MAX_OUTPUT_TOKENS=512
+7. (optional) export BEDROCK_TEMPERATURE=0.2
+
 Start The Server (hot reload)
 -----------------------------
 1. npm run dev
@@ -40,7 +50,7 @@ Frontend Smoke Test
 2. npm run dev:frontend
 3. Open http://localhost:5173/
 4. Sign in with a valid NexusNote Cognito username/password.
-5. Send a chat prompt and verify a fallback assistant response renders (until the backend chat endpoint is implemented).
+5. Send a chat prompt and verify the answer cites tool output (e.g., references Wikipedia when that tool is invoked).
 
 Shut Down
 ---------

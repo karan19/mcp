@@ -8,12 +8,22 @@ MCP-compatible WebSocket server with a companion Amplify-ready React frontend. U
 cd mcp
 npm install
 export SERPAPI_KEY=<your-serpapi-key>
+export COGNITO_REGION=<aws-region>
+export COGNITO_USER_POOL_ID=<user-pool-id>
+export COGNITO_USER_POOL_CLIENT_ID=<app-client-id>
+export BEDROCK_REGION=<aws-region>
+export BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
 npm run dev            # hot-reload server
 # npm run build        # compile to dist/
 # npm run start:websocket   # run compiled output
 ```
 
 The server listens on `0.0.0.0:8080`. Modify `src/config/env.ts` if you need different bindings.
+
+Optional environment overrides:
+- `BEDROCK_MAX_OUTPUT_TOKENS` (default 512)
+- `BEDROCK_TEMPERATURE` (default 0.2)
+- `MCP_HOST` / `MCP_PORT`
 
 ## Frontend (Amplify-ready)
 
@@ -37,15 +47,23 @@ docker build -t mcp-server .
 
 ## AWS Deployment (manual)
 
-1. **Set deployment config** – edit `infrastructure/bin/mcp-infra.ts`:
-   - Replace `REPLACE_WITH_AWS_ACCOUNT_ID` with your AWS account ID.
-   - Adjust CPU, memory, desired task count, or port in the `CONFIG` object if needed.
-   - The stack expects a Secrets Manager entry named `nexusnote/mcp/search-api` that contains your SerpAPI key.
-
-2. **Bootstrap (first time per account/region)**
+1. **Set deployment config**
    ```bash
    cd mcp/infrastructure
-   npm install
+   cp .env.example .env
+   # edit .env with your account ID, Cognito pool/client, Bedrock model, etc.
+   ```
+   Key variables:
+   - `MCP_ACCOUNT_ID`, `MCP_REGION`
+   - `MCP_COGNITO_USER_POOL_ID`, `MCP_COGNITO_USER_POOL_CLIENT_ID`
+   - `MCP_BEDROCK_MODEL_ID` (defaults to `meta.llama3-8b-instruct-v1:0`)
+   - `MCP_SERPAPI_SECRET_NAME` (Secrets Manager entry containing the SerpAPI key)
+   - Optional custom domain settings (`MCP_API_DOMAIN_NAME`, `MCP_HOSTED_ZONE_DOMAIN_NAME`, `MCP_CERTIFICATE_ARN`)
+
+2. **Bootstrap (first time per account/region)**
+  ```bash
+  cd mcp/infrastructure
+  npm install
    npx cdk bootstrap
    ```
 

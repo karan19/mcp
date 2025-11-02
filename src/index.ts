@@ -4,9 +4,11 @@ import { createMcpServer } from './server/mcp-server';
 const config = loadEnvConfig();
 
 async function main() {
-  const server = await createMcpServer({
+  const server = createMcpServer({
     port: config.port,
     host: config.host,
+    cognito: config.cognito,
+    bedrock: config.bedrock,
   });
 
   server.start();

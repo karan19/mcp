@@ -71,11 +71,12 @@ export function useChatSession() {
         }
 
         const payload = (await response.json()) as {
-          reply?: string;
+          reply?: unknown;
           toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown>; output: string[] }>;
         };
 
-        const replyText = payload.reply?.trim().length ? payload.reply : 'I received your message.';
+        const replyRaw = typeof payload.reply === 'string' ? payload.reply.trim() : '';
+        const replyText = replyRaw.length ? replyRaw : 'I received your message.';
 
         const assistantMessage: ChatMessage = {
           id: createMessageId(),
