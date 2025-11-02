@@ -10,6 +10,7 @@ const SERP_API_KEY = process.env.SERPAPI_KEY || process.env.SEARCH_WEB_API_KEY;
 
 export const searchWebDefinition: McpToolDefinition = {
   name: 'search.web',
+  friendlyName: 'Open Web Search',
   description: 'Performs a web search using Google via SerpAPI. Requires SERPAPI_KEY environment variable.',
   inputSchema: {
     type: 'object',

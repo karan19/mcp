@@ -2,6 +2,7 @@ import { McpToolDefinition, ToolHandler } from './types';
 import { searchWikipediaDefinition, searchWikipediaHandler } from './searchWikipedia';
 import { searchWebDefinition, searchWebHandler } from './searchWeb';
 import { searchArxivDefinition, searchArxivHandler } from './searchArxiv';
+import { dynamoTableTools } from './dynamodbTables';
 
 export interface ToolRegistryEntry {
   definition: McpToolDefinition;
@@ -22,6 +23,10 @@ export const toolRegistry: Record<string, ToolRegistryEntry> = {
     handler: searchArxivHandler,
   },
 };
+
+for (const entry of dynamoTableTools) {
+  toolRegistry[entry.definition.name] = entry;
+}
 
 export const toolDefinitions: McpToolDefinition[] = Object.values(toolRegistry).map((entry) => entry.definition);
 

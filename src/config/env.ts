@@ -11,11 +11,18 @@ export interface BedrockConfig {
   temperature: number;
 }
 
+export interface DynamoTableConfig {
+  tableName: string;
+  partitionKey: string;
+  sortKey?: string;
+}
+
 export interface EnvConfig {
   host: string;
   port: number;
   cognito: CognitoConfig;
   bedrock: BedrockConfig;
+  dynamodbTables: DynamoTableConfig[];
 }
 
 function readRequiredEnv(name: string): string {
@@ -36,6 +43,30 @@ function readNumberEnv(name: string, fallback: number): number {
     throw new Error(`Environment variable ${name} must be a number.`);
   }
   return parsed;
+}
+
+function parseDynamoTableConfig(raw: string | undefined): DynamoTableConfig[] {
+  if (!raw || !raw.trim()) {
+    return [];
+  }
+
+  return raw
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      const [tableName, partitionKey, sortKey] = entry.split('|').map((part) => part?.trim());
+      if (!tableName || !partitionKey) {
+        throw new Error(
+          `Invalid MCP_DYNAMODB_TABLE_CONFIG entry "${entry}". Expected format tableName|partitionKey|optionalSortKey.`,
+        );
+      }
+      return {
+        tableName,
+        partitionKey,
+        sortKey: sortKey || undefined,
+      };
+    });
 }
 
 export function loadEnvConfig(): EnvConfig {
@@ -59,10 +90,13 @@ export function loadEnvConfig(): EnvConfig {
     throw new Error('BEDROCK_TEMPERATURE must be a valid number.');
   }
 
+  const dynamodbTables = parseDynamoTableConfig(process.env.MCP_DYNAMODB_TABLE_CONFIG);
+
   return {
     host,
     port,
     cognito,
     bedrock,
+    dynamodbTables,
   };
 }

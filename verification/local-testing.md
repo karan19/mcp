@@ -25,6 +25,7 @@ Set Authentication And AI Environment
 5. export BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
 6. (optional) export BEDROCK_MAX_OUTPUT_TOKENS=512
 7. (optional) export BEDROCK_TEMPERATURE=0.2
+8. (optional) export MCP_DYNAMODB_TABLE_CONFIG="table|pk|sk;anotherTable|pk"
 
 Start The Server (hot reload)
 -----------------------------

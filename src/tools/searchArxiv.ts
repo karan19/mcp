@@ -14,6 +14,7 @@ const parser = new XMLParser({ ignoreAttributes: false });
 
 export const searchArxivDefinition: McpToolDefinition = {
   name: 'search.arxiv',
+  friendlyName: 'arXiv Paper Search',
   description: 'Searches arXiv for academic papers matching a query.',
   inputSchema: {
     type: 'object',

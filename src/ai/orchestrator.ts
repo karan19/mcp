@@ -38,12 +38,10 @@ function buildToolCatalog(toolDefinitions: McpToolDefinition[]): string {
     return 'No tools are available.';
   }
 
-  const entries = [
-    '- list.tools: Returns a description of every tool you can call (use for capability questions).',
-    ...toolDefinitions.map((tool) => `- ${tool.name}: ${tool.description}`),
-  ];
-
-  return entries.join('\n');
+  return toolDefinitions
+    .map((tool) => tool.friendlyName ?? tool.name)
+    .sort((a, b) => a.localeCompare(b))
+    .join(', ');
 }
 
 function extractFirstJsonObject(raw: string): string | null {
@@ -111,7 +109,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     toolCatalog,
     '',
     'Instructions:',
-    "- If the user is asking about your own capabilities (e.g., \"what tools can you use\"), do not call an external tool. Instead, respond with JSON: {\"action\":\"respond\",\"response\":\"<natural language answer>\"}.",
+    '- If the user is asking about your own capabilities (e.g., "what tools can you use"), do not call an external tool. Instead, respond with JSON: {"action":"respond","response":"<natural language answer>"}. When you list tools, output a comma-separated list of tool names. When a friendly name exists, use it; otherwise use the tool id.',
     '- If an external tool is needed, respond with {"action":"call_tool","tool":"<tool_name>","arguments":{...}}.',
     '- If you can answer immediately without a tool, respond with {"action":"respond","response":"<answer>"} in plain English.',
     '- Prefer calling tools when the question needs fresh or factual data.',
@@ -186,7 +184,10 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
       'Tool output:',
       toolSummary,
       '',
-      'Compose a helpful answer that references the tool output. Include citations such as (Wikipedia) when appropriate.',
+      'Compose a helpful answer using only the tool output.',
+      `- Cite the source as (${decision.tool}) when referencing the data.`,
+      '- Do not introduce external information or definitions unless they appear in the tool output.',
+      '- Skip generic disclaimers about accuracy.',
     ].join('\n');
 
     const answerMessages: ChatMessage[] = [

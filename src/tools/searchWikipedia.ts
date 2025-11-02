@@ -8,6 +8,7 @@ interface WikipediaSearchItem {
 
 export const searchWikipediaDefinition: McpToolDefinition = {
   name: 'search.wikipedia',
+  friendlyName: 'Wikipedia Lookup',
   description: 'Searches Wikipedia articles and returns the top summaries.',
   inputSchema: {
     type: 'object',

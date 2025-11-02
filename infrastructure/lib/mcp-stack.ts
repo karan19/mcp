@@ -117,6 +117,21 @@ export interface McpStackProps extends StackProps {
    * Hosted zone domain name that contains apiDomainName.
    */
   readonly hostedZoneDomainName?: string;
+
+  /**
+   * DynamoDB table ARNs that the task should be allowed to read from.
+   */
+  readonly dynamoTableArns?: string[];
+
+  /**
+   * Raw DynamoDB table config string passed through to the application (table|partitionKey|sortKey entries).
+   */
+  readonly dynamoTableConfig?: string;
+
+  /**
+   * Optional KMS key ARN used by the DynamoDB tables; grants decrypt permissions to the task role when provided.
+   */
+  readonly kmsKeyArn?: string;
 }
 
 export class McpStack extends Stack {
@@ -183,6 +198,9 @@ export class McpStack extends Stack {
         ...(props.bedrockTemperature !== undefined
           ? { BEDROCK_TEMPERATURE: String(props.bedrockTemperature) }
           : {}),
+        ...(props.dynamoTableConfig
+          ? { MCP_DYNAMODB_TABLE_CONFIG: props.dynamoTableConfig }
+          : {}),
       },
       secrets: {
         SERPAPI_KEY: ecs.Secret.fromSecretsManager(serpApiSecret),
@@ -215,6 +233,32 @@ export class McpStack extends Stack {
         resources: ['*'],
       }),
     );
+
+    const dynamoTableArns = props.dynamoTableArns ?? [];
+    if (dynamoTableArns.length > 0) {
+      const dynamoResources = dynamoTableArns.flatMap((arn) => [arn, `${arn}/index/*`]);
+      taskDefinition.taskRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:BatchGetItem',
+            'dynamodb:Query',
+            'dynamodb:Scan',
+            'dynamodb:DescribeTable',
+          ],
+          resources: dynamoResources,
+        }),
+      );
+    }
+
+    if (props.kmsKeyArn) {
+      taskDefinition.taskRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['kms:Decrypt', 'kms:DescribeKey'],
+          resources: [props.kmsKeyArn],
+        }),
+      );
+    }
 
     const serviceSecurityGroup = new ec2.SecurityGroup(this, 'ServiceSecurityGroup', {
       vpc,

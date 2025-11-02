@@ -24,6 +24,7 @@ Optional environment overrides:
 - `BEDROCK_MAX_OUTPUT_TOKENS` (default 512)
 - `BEDROCK_TEMPERATURE` (default 0.2)
 - `MCP_HOST` / `MCP_PORT`
+- `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated list such as `table|partitionKey|sortKey`)
 
 ## Frontend (Amplify-ready)
 
@@ -58,6 +59,8 @@ docker build -t mcp-server .
    - `MCP_COGNITO_USER_POOL_ID`, `MCP_COGNITO_USER_POOL_CLIENT_ID`
    - `MCP_BEDROCK_MODEL_ID` (defaults to `meta.llama3-8b-instruct-v1:0`)
    - `MCP_SERPAPI_SECRET_NAME` (Secrets Manager entry containing the SerpAPI key)
+   - `MCP_DYNAMODB_TABLE_ARNS` (comma-separated DynamoDB table ARNs the service may read)
+   - `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated table descriptors `table|partitionKey|sortKey`)
    - Optional custom domain settings (`MCP_API_DOMAIN_NAME`, `MCP_HOSTED_ZONE_DOMAIN_NAME`, `MCP_CERTIFICATE_ARN`)
 
 2. **Bootstrap (first time per account/region)**

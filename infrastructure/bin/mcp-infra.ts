@@ -84,6 +84,12 @@ const CONFIG = {
   redirectHttpToHttps: optionalBooleanEnv('MCP_REDIRECT_HTTP_TO_HTTPS', true),
   apiDomainName: optionalEnv('MCP_API_DOMAIN_NAME'),
   hostedZoneDomainName: optionalEnv('MCP_HOSTED_ZONE_DOMAIN_NAME'),
+  dynamoTableArns: (optionalEnv('MCP_DYNAMODB_TABLE_ARNS') ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0),
+  dynamoTableConfig: optionalEnv('MCP_DYNAMODB_TABLE_CONFIG') ?? '',
+  kmsKeyArn: optionalEnv('MCP_KMS_KEY_ARN'),
 };
 
 const app = new cdk.App();
@@ -111,4 +117,7 @@ new McpStack(app, CONFIG.stackName, {
   redirectHttpToHttps: CONFIG.redirectHttpToHttps,
   apiDomainName: CONFIG.apiDomainName,
   hostedZoneDomainName: CONFIG.hostedZoneDomainName,
+  dynamoTableArns: CONFIG.dynamoTableArns,
+  dynamoTableConfig: CONFIG.dynamoTableConfig,
+  kmsKeyArn: CONFIG.kmsKeyArn,
 });

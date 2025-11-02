@@ -1,6 +1,11 @@
 export interface McpToolDefinition {
   name: string;
   description: string;
+  /**
+   * Optional human-friendly label used when presenting the tool to users.
+   * The orchestration planner still relies on the canonical `name` value when invoking tools.
+   */
+  friendlyName?: string;
   inputSchema: {
     type: 'object';
     properties: Record<string, unknown>;
