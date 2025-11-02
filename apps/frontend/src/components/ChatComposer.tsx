@@ -20,20 +20,21 @@ export function ChatComposer({ disabled, onSend }: ChatComposerProps) {
   };
 
   return (
-    <form className="chat-composer" onSubmit={handleSubmit}>
-      <textarea
-        className="chat-input"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        placeholder="Ask a question about your data…"
-        rows={2}
-        disabled={disabled}
-      />
-      <div className="chat-actions">
-        <button className="chat-send-button" type="submit" disabled={disabled || value.trim().length === 0}>
+    <form className="chatgpt-composer" onSubmit={handleSubmit}>
+      <div className="chatgpt-input-row">
+        <textarea
+          className="chatgpt-textarea"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="Message NexusNote Assistant"
+          rows={2}
+          disabled={disabled}
+        />
+        <button className="chatgpt-send" type="submit" disabled={disabled || value.trim().length === 0}>
           Send
         </button>
       </div>
+      <div className="chatgpt-composer-hint">Press Enter to send • Shift + Enter for a new line</div>
     </form>
   );
 }

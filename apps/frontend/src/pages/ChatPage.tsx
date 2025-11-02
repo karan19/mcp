@@ -16,40 +16,44 @@ export function ChatPage() {
   };
 
   return (
-    <div className="chat-shell">
-      <header className="chat-header">
-        <div>
-          <h1>NexusNote Assistant</h1>
-          <p className="chat-subtitle">Connected to DynamoDB, S3, and RDS via MCP tools.</p>
+    <div className="chatgpt-shell">
+      <header className="chatgpt-topbar">
+        <div className="chatgpt-brand">
+          <span className="chatgpt-logo" aria-hidden>
+            NN
+          </span>
+          <div className="chatgpt-brand-text">
+            <h1 className="chatgpt-title">NexusNote Assistant</h1>
+            <p className="chatgpt-subtitle">Connected to DynamoDB, S3, and RDS via MCP tools.</p>
+          </div>
         </div>
-        <div className="chat-user-panel">
-          <div className="chat-user-chip">
-            <span className="chat-avatar" aria-hidden>
+        <div className="chatgpt-header-actions">
+          <button className="chatgpt-reset" type="button" onClick={reset} disabled={pending}>
+            New chat
+          </button>
+          <div className="chatgpt-user">
+            <span className="chatgpt-user-avatar" aria-hidden>
               {initials}
             </span>
-            <div className="chat-user-info">
-              <span className="chat-user-name">{user?.displayName}</span>
-              <span className="chat-user-email">{user?.email}</span>
+            <div className="chatgpt-user-details">
+              <span className="chatgpt-user-name">{user?.displayName}</span>
+              <span className="chatgpt-user-email">{user?.email}</span>
             </div>
           </div>
-          <button className="chat-logout" onClick={handleLogout}>
+          <button className="chatgpt-signout" onClick={handleLogout}>
             Sign out
           </button>
         </div>
       </header>
 
-      <main className="chat-main">
-        <ChatMessageList messages={messages} />
+      <main className="chatgpt-main">
+        <ChatMessageList messages={messages} userInitials={initials} />
       </main>
 
-      <footer className="chat-footer">
-        {error && <div className="chat-error-banner">{error}</div>}
-        <div className="chat-controls">
-          <button className="chat-reset" type="button" onClick={reset} disabled={pending}>
-            Clear conversation
-          </button>
-        </div>
+      <footer className="chatgpt-footer">
+        {error && <div className="chatgpt-error">{error}</div>}
         <ChatComposer disabled={pending} onSend={(value) => sendMessage({ content: value })} />
+        <p className="chatgpt-disclaimer">NexusNote may produce inaccurate information about your data. Please verify important responses.</p>
       </footer>
     </div>
   );
