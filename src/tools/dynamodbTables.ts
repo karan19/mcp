@@ -38,6 +38,8 @@ const TABLE_DESCRIPTIONS: Record<string, string> = {
     'Thought entries written by the user.',
   'nexusnote-tracking-workboard-production':
     'Tracking workboard slots, chains, and tasks.',
+  'GhostInfraStack-PostsTableC82B36F0-1OY982XQPEJ9X':
+    'Ghost CMS posts with rendered HTML content (keyed by slug).',
 };
 
 const TABLE_FRIENDLY_NAMES: Record<string, string> = {
@@ -54,6 +56,7 @@ const TABLE_FRIENDLY_NAMES: Record<string, string> = {
   'nexusnote-thought-tags-production': 'Thought Tags',
   'nexusnote-thoughts-production': 'Thoughts',
   'nexusnote-tracking-workboard-production': 'Tracking Workboard',
+  'GhostInfraStack-PostsTableC82B36F0-1OY982XQPEJ9X': 'Ghost Posts',
 };
 
 function defaultFriendlyName(tableName: string): string {
