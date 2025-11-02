@@ -29,7 +29,7 @@ export interface RunChatTurnOptions {
 }
 
 export interface RunChatTurnResult {
-  reply: string;
+  reply: string | { tools: Array<{ name: string; description: string }> };
   toolCalls: ToolCallRecord[];
 }
 
@@ -38,9 +38,12 @@ function buildToolCatalog(toolDefinitions: McpToolDefinition[]): string {
     return 'No tools are available.';
   }
 
-  return toolDefinitions
-    .map((tool) => `- ${tool.name}: ${tool.description}`)
-    .join('\n');
+  const entries = [
+    '- list.tools: Returns a description of every tool you can call (use for capability questions).',
+    ...toolDefinitions.map((tool) => `- ${tool.name}: ${tool.description}`),
+  ];
+
+  return entries.join('\n');
 }
 
 function extractFirstJsonObject(raw: string): string | null {
@@ -99,20 +102,6 @@ function parseModelJsonResponse(raw: string): FirstPassDecision {
 export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatTurnResult> {
   const { userMessage, bedrock, toolDefinitions, toolRegistry, logger } = options;
 
-  const normalized = userMessage.toLowerCase();
-  if (
-    normalized.includes('what tools') ||
-    normalized.includes('available tools') ||
-    normalized.includes('list tools') ||
-    normalized.includes('which tools')
-  ) {
-    const toolList = buildToolCatalog(toolDefinitions);
-    return {
-      reply: `Here are the tools I can use:\n${toolList}`,
-      toolCalls: [],
-    };
-  }
-
   const toolCatalog = buildToolCatalog(toolDefinitions);
 
   const decisionPrompt = [
@@ -122,9 +111,9 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     toolCatalog,
     '',
     'Instructions:',
-    '- Respond with JSON only.',
-    '- If a tool is needed, respond with {"action":"call_tool","tool":"<tool_name>","arguments":{...}}.',
-    '- If you can answer immediately, respond with {"action":"respond","response":"<answer>"}.',
+    "- If the user is asking about your own capabilities (e.g., \"what tools can you use\"), do not call an external tool. Instead, respond with JSON: {\"action\":\"respond\",\"response\":\"<natural language answer>\"}.",
+    '- If an external tool is needed, respond with {"action":"call_tool","tool":"<tool_name>","arguments":{...}}.',
+    '- If you can answer immediately without a tool, respond with {"action":"respond","response":"<answer>"} in plain English.',
     '- Prefer calling tools when the question needs fresh or factual data.',
   ].join('\n');
 

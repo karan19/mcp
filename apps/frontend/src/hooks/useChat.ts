@@ -75,13 +75,10 @@ export function useChatSession() {
           toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown>; output: string[] }>;
         };
 
-        const replyRaw = typeof payload.reply === 'string' ? payload.reply.trim() : '';
-        const replyText = replyRaw.length ? replyRaw : 'I received your message.';
-
         const assistantMessage: ChatMessage = {
           id: createMessageId(),
           role: 'assistant',
-          content: replyText,
+          content: formatReply(payload.reply),
           createdAt: new Date().toISOString(),
           toolCalls: payload.toolCalls ?? [],
         };
@@ -125,4 +122,37 @@ export function useChatSession() {
     sendMessage,
     reset,
   };
+}
+
+function formatReply(reply: unknown): string {
+  if (!reply) {
+    return 'I received your message.';
+  }
+
+  if (typeof reply === 'string') {
+    const trimmed = reply.trim();
+    return trimmed.length ? trimmed : 'I received your message.';
+  }
+
+  if (
+    typeof reply === 'object' &&
+    reply !== null &&
+    'tools' in reply &&
+    Array.isArray((reply as { tools?: unknown }).tools)
+  ) {
+    const tools = (reply as { tools: Array<{ name: string; description: string }> }).tools;
+    if (!tools.length) {
+      return 'I do not have any tools available right now.';
+    }
+    const list = tools
+      .map((tool) => `• ${tool.name}: ${tool.description}`)
+      .join('\n');
+    return `Here are the tools I can use:\n${list}`;
+  }
+
+  try {
+    return JSON.stringify(reply, null, 2);
+  } catch {
+    return 'I received your message.';
+  }
 }
