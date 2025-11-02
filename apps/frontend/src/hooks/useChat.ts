@@ -70,7 +70,10 @@ export function useChatSession() {
           throw new Error(`Chat request failed (${response.status})`);
         }
 
-        const payload = (await response.json()) as { reply?: string };
+        const payload = (await response.json()) as {
+          reply?: string;
+          toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown>; output: string[] }>;
+        };
 
         const replyText = payload.reply?.trim().length ? payload.reply : 'I received your message.';
 
@@ -79,6 +82,7 @@ export function useChatSession() {
           role: 'assistant',
           content: replyText,
           createdAt: new Date().toISOString(),
+          toolCalls: payload.toolCalls ?? [],
         };
 
         setMessages((current) => [...current, assistantMessage]);
