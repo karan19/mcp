@@ -31,17 +31,22 @@ Exercise MCP Tools
 2. wscat -c ws://localhost:8080/
 3. Send a list_tools request:
    {"type":"list_tools","requestId":"1"}
-4. Send call_tool requests (examples):
-   {"type":"call_tool","requestId":"2","toolName":"search.web","arguments":{"query":"aws re:Invent 2024","numResults":3}}
-   {"type":"call_tool","requestId":"3","toolName":"search.wikipedia","arguments":{"query":"Anthropic Claude","language":"en","numResults":2}}
-   {"type":"call_tool","requestId":"4","toolName":"search.arxiv","arguments":{"query":"transformer architecture","maxResults":2}}
-   {"type":"call_tool","requestId":"5","toolName":"search.aws_docs","arguments":{"query":"ecs fargate logging","numResults":3}}
+4. Call the Wikipedia search tool:
+   {"type":"call_tool","requestId":"2","toolName":"search.wikipedia","arguments":{"query":"Anthropic Claude","language":"en","numResults":2}}
+
+Frontend Smoke Test
+-------------------
+1. Copy `apps/frontend/.env.example` to `.env` and set Cognito env vars (region, user pool id, app client id) plus `VITE_API_BASE_URL`.
+2. npm run dev:frontend
+3. Open http://localhost:5173/
+4. Sign in with a valid NexusNote Cognito username/password.
+5. Send a chat prompt and verify a fallback assistant response renders (until the backend chat endpoint is implemented).
 
 Shut Down
 ---------
 - Stop the Node process with Ctrl+C.
+- Stop the Vite dev server with Ctrl+C.
 
 Notes
 -----
 - The server listens on ws://localhost:8080/.
-- `search.aws_docs` currently returns an upstream 404 because the AWS docs JSON endpoint has changed.

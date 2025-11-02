@@ -3,10 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "description": "Anthropic MCP server configuration for NexusNote debate features.",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",
     "start:websocket": "node dist/index.js",
-    "build": "tsc -p ."
+    "build": "tsc -p .",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "build:frontend": "npm run build --workspace frontend"
   },
   "dependencies": {
     "fast-xml-parser": "^4.3.6",
