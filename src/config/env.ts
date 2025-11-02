@@ -15,6 +15,9 @@ export interface DynamoTableConfig {
   tableName: string;
   partitionKey: string;
   sortKey?: string;
+  gsiName?: string;
+  gsiPartitionKey?: string;
+  gsiSortKey?: string;
 }
 
 export interface EnvConfig {
@@ -55,16 +58,28 @@ function parseDynamoTableConfig(raw: string | undefined): DynamoTableConfig[] {
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
     .map((entry) => {
-      const [tableName, partitionKey, sortKey] = entry.split('|').map((part) => part?.trim());
-      if (!tableName || !partitionKey) {
+      const parts = entry.split('|').map((part) => part?.trim());
+      if (parts.length < 2) {
         throw new Error(
-          `Invalid MCP_DYNAMODB_TABLE_CONFIG entry "${entry}". Expected format tableName|partitionKey|optionalSortKey.`,
+          `Invalid MCP_DYNAMODB_TABLE_CONFIG entry "${entry}". Expected format tableName|partitionKey|[sortKey|gsiName|gsiPartitionKey|gsiSortKey].`,
         );
       }
+
+      const [tableName, partitionKey, sortKey, gsiName, gsiPartitionKey, gsiSortKey] = parts;
+
+      if (!tableName || !partitionKey) {
+        throw new Error(
+          `Invalid MCP_DYNAMODB_TABLE_CONFIG entry "${entry}". tableName and partitionKey are required.`,
+        );
+      }
+
       return {
         tableName,
         partitionKey,
         sortKey: sortKey || undefined,
+        gsiName: gsiName || undefined,
+        gsiPartitionKey: gsiPartitionKey || undefined,
+        gsiSortKey: gsiSortKey || undefined,
       };
     });
 }

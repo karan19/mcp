@@ -90,6 +90,8 @@ const CONFIG = {
     .filter((value) => value.length > 0),
   dynamoTableConfig: optionalEnv('MCP_DYNAMODB_TABLE_CONFIG') ?? '',
   kmsKeyArn: optionalEnv('MCP_KMS_KEY_ARN'),
+  createChatTable: optionalBooleanEnv('MCP_CREATE_CHAT_TABLE', true),
+  chatTableName: optionalEnv('MCP_CHAT_TABLE_NAME'),
 };
 
 const app = new cdk.App();
@@ -120,4 +122,6 @@ new McpStack(app, CONFIG.stackName, {
   dynamoTableArns: CONFIG.dynamoTableArns,
   dynamoTableConfig: CONFIG.dynamoTableConfig,
   kmsKeyArn: CONFIG.kmsKeyArn,
+  createChatTable: CONFIG.createChatTable,
+  chatTableName: CONFIG.chatTableName,
 });

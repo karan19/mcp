@@ -24,7 +24,8 @@ Optional environment overrides:
 - `BEDROCK_MAX_OUTPUT_TOKENS` (default 512)
 - `BEDROCK_TEMPERATURE` (default 0.2)
 - `MCP_HOST` / `MCP_PORT`
-- `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated list such as `table|partitionKey|sortKey`)
+- `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated entries `table|partitionKey|sortKey|gsiName|gsiPartitionKey|gsiSortKey`)
+- `MCP_CHAT_TABLE_NAME` (optional table selector when multiple entries are supplied)
 
 ## Frontend (Amplify-ready)
 
@@ -38,6 +39,31 @@ npm run build:frontend         # production build (outputs to apps/frontend/dist
 ```
 
 Deploy with AWS Amplify Hosting by connecting this repo and keeping the generated `amplify.yml`. The build pipeline runs `npm ci` at the repo root and publishes `apps/frontend/dist`. Set `VITE_API_BASE_URL`, `VITE_COGNITO_REGION`, `VITE_COGNITO_USER_POOL_ID`, and `VITE_COGNITO_USER_POOL_CLIENT_ID` in Amplify’s environment settings.
+
+### Chat API & persistence
+
+The MCP server exposes a small REST surface alongside the `/chat` orchestrator endpoint:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/chat` | `POST` | Execute the next turn in a conversation. Accepts `{ message, sessionId?, messageId? }`. Returns `{ sessionId, reply, toolCalls }`. |
+| `/conversations` | `GET` | List conversation summaries for the authenticated user. |
+| `/conversations/:id/messages` | `GET` | Retrieve the full message history for a session (ordered by `createdAt`). |
+
+Chat history is stored in DynamoDB. Provide table metadata via `MCP_DYNAMODB_TABLE_CONFIG`, for example:
+
+```
+export MCP_DYNAMODB_TABLE_CONFIG="mcp-chat|sessionId|createdAt|userIndex|userId|lastMessageAt"
+```
+
+The table uses:
+- **PK**: `sessionId`
+- **SK**: ISO timestamp for messages, `__SUMMARY__` for the summary item
+- **GSI (optional but recommended)**: `userIndex` on `userId` / `lastMessageAt` for listing conversations by user
+
+Set `MCP_CHAT_TABLE_NAME` when multiple tables are defined and you need to select the chat store explicitly.
+
+When you deploy via the provided CDK stack, leave `MCP_CREATE_CHAT_TABLE=true` to have the chat history table (and its `userIndex` GSI) created automatically. Use `MCP_CHAT_TABLE_NAME` if you need to control the physical table name; the stack wires both `MCP_DYNAMODB_TABLE_CONFIG` and `MCP_CHAT_TABLE_NAME` into the service task definition.
 
 ## Docker Image
 
@@ -60,7 +86,9 @@ docker build -t mcp-server .
    - `MCP_BEDROCK_MODEL_ID` (defaults to `meta.llama3-8b-instruct-v1:0`)
    - `MCP_SERPAPI_SECRET_NAME` (Secrets Manager entry containing the SerpAPI key)
    - `MCP_DYNAMODB_TABLE_ARNS` (comma-separated DynamoDB table ARNs the service may read)
-   - `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated table descriptors `table|partitionKey|sortKey`)
+   - `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated table descriptors `table|partitionKey|sortKey|gsiName|gsiPartitionKey|gsiSortKey`)
+   - `MCP_CREATE_CHAT_TABLE` (defaults to `true`; set to `false` to skip provisioning the managed chat table)
+   - `MCP_CHAT_TABLE_NAME` (optional explicit name when provisioning the managed chat table)
    - Optional custom domain settings (`MCP_API_DOMAIN_NAME`, `MCP_HOSTED_ZONE_DOMAIN_NAME`, `MCP_CERTIFICATE_ARN`)
 
 2. **Bootstrap (first time per account/region)**

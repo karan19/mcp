@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { useAuth } from '../context/AuthContext';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { appConfig } from '../config/env';
-import type { ChatMessage } from '../types/chat';
+import { useAuth } from '../context/AuthContext';
+import { buildAuthHeaders, fetchConversationMessages, fetchConversations } from '../api/chat';
+import type { ChatMessage, ConversationSummary, PersistedChatMessage, ToolCall } from '../types/chat';
 
 interface SendMessageArgs {
   content: string;
@@ -15,30 +16,76 @@ function createMessageId() {
   return Math.random().toString(36).slice(2);
 }
 
-const INITIAL_MESSAGE: ChatMessage = {
-  id: createMessageId(),
-  role: 'assistant',
-  content: 'Hi there! Ask me anything about your NexusNote data sources.',
-  createdAt: new Date().toISOString(),
-};
-
 export function useChatSession() {
-  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
+  const { getIdToken } = useAuth();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const { getIdToken } = useAuth();
+
+  const refreshConversations = useCallback(async () => {
+    setLoadingConversations(true);
+    try {
+      const records = await fetchConversations(getIdToken);
+      setConversations(records);
+      setHistoryError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to load conversations.';
+      setHistoryError(message);
+    } finally {
+      setLoadingConversations(false);
+    }
+  }, [getIdToken]);
+
+  useEffect(() => {
+    refreshConversations().catch(() => {
+      /* handled in state */
+    });
+  }, [refreshConversations]);
+
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+    },
+    []
+  );
+
+  const selectConversation = useCallback(
+    async (targetSessionId: string) => {
+      setLoadingHistory(true);
+      setError(null);
+      try {
+        const result = await fetchConversationMessages(targetSessionId, getIdToken);
+        const normalized = result.messages.map(mapServerMessage).sort(sortByTimestamp);
+        setMessages(normalized);
+        setSessionId(result.sessionId);
+        setHistoryError(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to load conversation.';
+        setHistoryError(message);
+      } finally {
+        setLoadingHistory(false);
+      }
+    },
+    [getIdToken]
+  );
 
   const sendMessage = useCallback(
     async ({ content }: SendMessageArgs) => {
-      if (!content.trim()) {
+      const trimmed = content.trim();
+      if (!trimmed) {
         return;
       }
 
       const userMessage: ChatMessage = {
         id: createMessageId(),
         role: 'user',
-        content,
+        content: trimmed,
         createdAt: new Date().toISOString(),
       };
 
@@ -51,18 +98,15 @@ export function useChatSession() {
       abortRef.current = controller;
 
       try {
-        const token = await getIdToken();
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (token) {
-          headers.Authorization = `Bearer ${token}`;
-        }
-
+        const headers = await buildAuthHeaders(getIdToken);
         const response = await fetch(`${appConfig.apiBaseUrl}/chat`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ message: content }),
+          body: JSON.stringify({
+            message: trimmed,
+            sessionId: sessionId ?? undefined,
+            messageId: userMessage.id,
+          }),
           signal: controller.signal,
         });
 
@@ -72,24 +116,29 @@ export function useChatSession() {
 
         const payload = (await response.json()) as {
           reply?: unknown;
-          toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown>; output: string[] }>;
+          toolCalls?: ToolCall[];
+          sessionId?: string;
         };
+
+        if (payload.sessionId) {
+          setSessionId(payload.sessionId);
+        }
 
         const assistantMessage: ChatMessage = {
           id: createMessageId(),
           role: 'assistant',
           content: formatReply(payload.reply),
           createdAt: new Date().toISOString(),
-          toolCalls: payload.toolCalls ?? [],
+          toolCalls: payload.toolCalls ?? undefined,
         };
 
         setMessages((current) => [...current, assistantMessage]);
+        await refreshConversations();
       } catch (err) {
         const fallbackMessage: ChatMessage = {
           id: createMessageId(),
           role: 'assistant',
-          content:
-            'I could not contact the assistant API. Please check your connection or try again shortly.',
+          content: 'I could not contact the assistant API. Please try again shortly.',
           createdAt: new Date().toISOString(),
         };
         setMessages((current) => [...current, fallbackMessage]);
@@ -99,12 +148,13 @@ export function useChatSession() {
         setPending(false);
       }
     },
-    [getIdToken, setMessages]
+    [getIdToken, refreshConversations, sessionId]
   );
 
-  const reset = useCallback(() => {
+  const startNewConversation = useCallback(() => {
     abortRef.current?.abort();
-    setMessages([INITIAL_MESSAGE]);
+    setMessages([]);
+    setSessionId(null);
     setError(null);
   }, []);
 
@@ -113,15 +163,70 @@ export function useChatSession() {
       messages,
       pending,
       error,
+      sessionId,
+      conversations,
+      loadingConversations,
+      loadingHistory,
+      historyError,
     }),
-    [messages, pending, error]
+    [messages, pending, error, sessionId, conversations, loadingConversations, loadingHistory, historyError]
   );
 
   return {
     ...status,
     sendMessage,
-    reset,
+    startNewConversation,
+    refreshConversations,
+    selectConversation,
   };
+}
+
+function mapServerMessage(entry: PersistedChatMessage): ChatMessage {
+  return {
+    id: entry.messageId,
+    role: entry.role,
+    content: entry.content,
+    createdAt: entry.createdAt,
+    toolCalls: extractToolCalls(entry.metadata),
+  };
+}
+
+function extractToolCalls(metadata: Record<string, unknown> | undefined): ToolCall[] | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const raw = (metadata as { toolCalls?: unknown }).toolCalls;
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const calls: ToolCall[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) {
+      continue;
+    }
+
+    const rawName = (item as { toolName?: unknown }).toolName;
+    const args = (item as { arguments?: unknown }).arguments;
+    const output = (item as { output?: unknown }).output;
+
+    if (typeof rawName !== 'string' || typeof args !== 'object' || args === null || !Array.isArray(output)) {
+      continue;
+    }
+
+    calls.push({
+      toolName: rawName,
+      arguments: args as Record<string, unknown>,
+      output: output.filter((value): value is string => typeof value === 'string'),
+    });
+  }
+
+  return calls.length ? calls : undefined;
+}
+
+function sortByTimestamp(a: ChatMessage, b: ChatMessage) {
+  return a.createdAt.localeCompare(b.createdAt);
 }
 
 function formatReply(reply: unknown): string {
@@ -144,9 +249,7 @@ function formatReply(reply: unknown): string {
     if (!tools.length) {
       return 'I do not have any tools available right now.';
     }
-    const list = tools
-      .map((tool) => `• ${tool.name}: ${tool.description}`)
-      .join('\n');
+    const list = tools.map((tool) => `• ${tool.name}: ${tool.description}`).join('\n');
     return `Here are the tools I can use:\n${list}`;
   }
 

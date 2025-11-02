@@ -1,4 +1,11 @@
 export type ChatRole = 'user' | 'assistant' | 'system';
+
+export interface ToolCall {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  output: string[];
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -7,8 +14,23 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
 }
 
-export interface ToolCall {
-  toolName: string;
-  arguments: Record<string, unknown>;
-  output: string[];
+export interface ConversationSummary {
+  sessionId: string;
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string;
+  lastRole?: ChatRole;
+  lastMessagePreview?: string;
+  title?: string;
+}
+
+export interface PersistedChatMessage {
+  sessionId: string;
+  createdAt: string;
+  messageId: string;
+  role: ChatRole;
+  content: string;
+  userId: string;
+  metadata?: Record<string, unknown>;
 }

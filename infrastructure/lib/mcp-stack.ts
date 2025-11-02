@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { Duration, Stack, StackProps, CfnOutput } from 'aws-cdk-lib';
+import { Duration, Stack, StackProps, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
 import {
   aws_ec2 as ec2,
   aws_ecs as ecs,
@@ -8,6 +8,7 @@ import {
   aws_logs as logs,
   aws_secretsmanager as secretsmanager,
   aws_iam as iam,
+  aws_dynamodb as dynamodb,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
@@ -132,6 +133,18 @@ export interface McpStackProps extends StackProps {
    * Optional KMS key ARN used by the DynamoDB tables; grants decrypt permissions to the task role when provided.
    */
   readonly kmsKeyArn?: string;
+
+  /**
+   * Whether to provision a managed chat history table.
+   *
+   * @default true
+   */
+  readonly createChatTable?: boolean;
+
+  /**
+   * Optional explicit name for the managed chat history table.
+   */
+  readonly chatTableName?: string;
 }
 
 export class McpStack extends Stack {
@@ -152,6 +165,42 @@ export class McpStack extends Stack {
       vpc,
       containerInsights: true,
     });
+
+    const tableConfigEntries: string[] = [];
+    if (props.dynamoTableConfig && props.dynamoTableConfig.trim()) {
+      tableConfigEntries.push(
+        ...props.dynamoTableConfig
+          .split(';')
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0),
+      );
+    }
+
+    const externalDynamoTableArns = (props.dynamoTableArns ?? []).filter((arn) => arn && arn.length > 0);
+    const shouldCreateChatTable = props.createChatTable ?? true;
+    let chatTable: dynamodb.Table | undefined;
+
+    if (shouldCreateChatTable) {
+      chatTable = new dynamodb.Table(this, 'ChatHistoryTable', {
+        tableName: props.chatTableName,
+        partitionKey: { name: 'sessionId', type: dynamodb.AttributeType.STRING },
+        sortKey: { name: 'createdAt', type: dynamodb.AttributeType.STRING },
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        removalPolicy: RemovalPolicy.RETAIN,
+      });
+
+      chatTable.addGlobalSecondaryIndex({
+        indexName: 'userIndex',
+        partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+        sortKey: { name: 'lastMessageAt', type: dynamodb.AttributeType.STRING },
+        projectionType: dynamodb.ProjectionType.ALL,
+      });
+
+      const chatTableConfig = `${chatTable.tableName}|sessionId|createdAt|userIndex|userId|lastMessageAt`;
+      tableConfigEntries.push(chatTableConfig);
+    }
+
+    const combinedTableConfig = tableConfigEntries.join(';');
 
     const taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDefinition', {
       cpu,
@@ -174,6 +223,34 @@ export class McpStack extends Stack {
       throw new Error(`Container image directory does not exist: ${containerImageDirectory}`);
     }
 
+    const containerEnv: Record<string, string> = {
+      LOG_LEVEL: props.logLevel ?? 'info',
+      NODE_ENV: 'production',
+      MCP_HOST: '0.0.0.0',
+      MCP_PORT: String(servicePort),
+      COGNITO_REGION: props.cognitoRegion,
+      COGNITO_USER_POOL_ID: props.cognitoUserPoolId,
+      COGNITO_USER_POOL_CLIENT_ID: props.cognitoUserPoolClientId,
+      BEDROCK_REGION: props.bedrockRegion,
+      BEDROCK_MODEL_ID: props.bedrockModelId,
+    };
+
+    if (props.bedrockMaxOutputTokens !== undefined) {
+      containerEnv.BEDROCK_MAX_OUTPUT_TOKENS = String(props.bedrockMaxOutputTokens);
+    }
+
+    if (props.bedrockTemperature !== undefined) {
+      containerEnv.BEDROCK_TEMPERATURE = String(props.bedrockTemperature);
+    }
+
+    if (combinedTableConfig) {
+      containerEnv.MCP_DYNAMODB_TABLE_CONFIG = combinedTableConfig;
+    }
+
+    if (chatTable) {
+      containerEnv.MCP_CHAT_TABLE_NAME = chatTable.tableName;
+    }
+
     const container = taskDefinition.addContainer('McpContainer', {
       image: ecs.ContainerImage.fromAsset(containerImageDirectory, {
         platform: Platform.LINUX_AMD64,
@@ -182,26 +259,7 @@ export class McpStack extends Stack {
         streamPrefix: 'mcp',
         logGroup,
       }),
-      environment: {
-        LOG_LEVEL: props.logLevel ?? 'info',
-        NODE_ENV: 'production',
-        MCP_HOST: '0.0.0.0',
-        MCP_PORT: String(servicePort),
-        COGNITO_REGION: props.cognitoRegion,
-        COGNITO_USER_POOL_ID: props.cognitoUserPoolId,
-        COGNITO_USER_POOL_CLIENT_ID: props.cognitoUserPoolClientId,
-        BEDROCK_REGION: props.bedrockRegion,
-        BEDROCK_MODEL_ID: props.bedrockModelId,
-        ...(props.bedrockMaxOutputTokens !== undefined
-          ? { BEDROCK_MAX_OUTPUT_TOKENS: String(props.bedrockMaxOutputTokens) }
-          : {}),
-        ...(props.bedrockTemperature !== undefined
-          ? { BEDROCK_TEMPERATURE: String(props.bedrockTemperature) }
-          : {}),
-        ...(props.dynamoTableConfig
-          ? { MCP_DYNAMODB_TABLE_CONFIG: props.dynamoTableConfig }
-          : {}),
-      },
+      environment: containerEnv,
       secrets: {
         SERPAPI_KEY: ecs.Secret.fromSecretsManager(serpApiSecret),
       },
@@ -234,9 +292,12 @@ export class McpStack extends Stack {
       }),
     );
 
-    const dynamoTableArns = props.dynamoTableArns ?? [];
-    if (dynamoTableArns.length > 0) {
-      const dynamoResources = dynamoTableArns.flatMap((arn) => [arn, `${arn}/index/*`]);
+    if (chatTable) {
+      chatTable.grantReadWriteData(taskDefinition.taskRole);
+    }
+
+    if (externalDynamoTableArns.length > 0) {
+      const dynamoResources = externalDynamoTableArns.flatMap((arn) => [arn, `${arn}/index/*`]);
       taskDefinition.taskRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
           actions: [
@@ -399,6 +460,18 @@ export class McpStack extends Stack {
       value: cluster.clusterName,
       description: 'ECS cluster running the MCP server.',
     });
+
+    if (chatTable) {
+      new CfnOutput(this, 'ChatHistoryTableName', {
+        value: chatTable.tableName,
+        description: 'DynamoDB table storing chat conversation history.',
+      });
+
+      new CfnOutput(this, 'ChatHistoryTableArn', {
+        value: chatTable.tableArn,
+        description: 'ARN of the chat conversation history table.',
+      });
+    }
 
     new CfnOutput(this, 'TaskDefinitionArn', {
       value: taskDefinition.taskDefinitionArn,

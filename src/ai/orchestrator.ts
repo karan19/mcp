@@ -22,6 +22,7 @@ export interface ToolCallRecord {
 
 export interface RunChatTurnOptions {
   userMessage: string;
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   bedrock: BedrockConfig;
   toolDefinitions: McpToolDefinition[];
   toolRegistry: ToolRegistry;
@@ -98,12 +99,23 @@ function parseModelJsonResponse(raw: string): FirstPassDecision {
 }
 
 export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatTurnResult> {
-  const { userMessage, bedrock, toolDefinitions, toolRegistry, logger } = options;
+  const { userMessage, history = [], bedrock, toolDefinitions, toolRegistry, logger } = options;
 
   const toolCatalog = buildToolCatalog(toolDefinitions);
+  const relevantHistory = history.slice(-10);
+  const historyTranscript = relevantHistory
+    .map((entry) => {
+      const speaker = entry.role === 'assistant' ? 'Assistant' : 'User';
+      return `${speaker}: ${entry.content}`;
+    })
+    .join('\n');
 
-  const decisionPrompt = [
-    `User question: ${userMessage}`,
+  const decisionParts: string[] = [];
+  if (historyTranscript) {
+    decisionParts.push('Conversation so far:', historyTranscript, '');
+  }
+  decisionParts.push(
+    `User message: ${userMessage}`,
     '',
     'Available tools:',
     toolCatalog,
@@ -112,8 +124,10 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     '- If the user is asking about your own capabilities (e.g., "what tools can you use"), do not call an external tool. Instead, respond with JSON: {"action":"respond","response":"<natural language answer>"}. When you list tools, output a comma-separated list of tool names. When a friendly name exists, use it; otherwise use the tool id.',
     '- If an external tool is needed, respond with {"action":"call_tool","tool":"<tool_name>","arguments":{...}}.',
     '- If you can answer immediately without a tool, respond with {"action":"respond","response":"<answer>"} in plain English.',
-    '- Prefer calling tools when the question needs fresh or factual data.',
-  ].join('\n');
+    '- Prefer calling tools when the question needs fresh or factual data.'
+  );
+
+  const decisionPrompt = decisionParts.join('\n');
 
   const decisionMessages: ChatMessage[] = [
     {
@@ -177,9 +191,16 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     const toolTexts = handlerResult.content.map((item) => item.text);
     const toolSummary = toolTexts.join('\n\n');
 
-    const answerPrompt = [
+    const answerParts: string[] = [
       `You requested tool "${decision.tool}" to help answer a question.`,
-      `User question: ${userMessage}`,
+    ];
+
+    if (historyTranscript) {
+      answerParts.push('Previous conversation context:', historyTranscript, '');
+    }
+
+    answerParts.push(
+      `User message: ${userMessage}`,
       '',
       'Tool output:',
       toolSummary,
@@ -187,8 +208,10 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
       'Compose a helpful answer using only the tool output.',
       `- Cite the source as (${decision.tool}) when referencing the data.`,
       '- Do not introduce external information or definitions unless they appear in the tool output.',
-      '- Skip generic disclaimers about accuracy.',
-    ].join('\n');
+      '- Skip generic disclaimers about accuracy.'
+    );
+
+    const answerPrompt = answerParts.join('\n');
 
     const answerMessages: ChatMessage[] = [
       {

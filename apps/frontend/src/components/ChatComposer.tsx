@@ -3,10 +3,11 @@ import { useState } from 'react';
 
 interface ChatComposerProps {
   disabled?: boolean;
+  floating?: boolean;
   onSend: (value: string) => Promise<void> | void;
 }
 
-export function ChatComposer({ disabled, onSend }: ChatComposerProps) {
+export function ChatComposer({ disabled, floating, onSend }: ChatComposerProps) {
   const [value, setValue] = useState('');
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -20,21 +21,21 @@ export function ChatComposer({ disabled, onSend }: ChatComposerProps) {
   };
 
   return (
-    <form className="chatgpt-composer" onSubmit={handleSubmit}>
-      <div className="chatgpt-input-row">
+    <form className={`chat-composer${floating ? ' chat-composer--floating' : ''}`} onSubmit={handleSubmit}>
+      <div className="chat-composer__controls">
         <textarea
-          className="chatgpt-textarea"
+          className="chat-composer__textarea"
           value={value}
           onChange={(event) => setValue(event.target.value)}
-          placeholder="Message NexusNote Assistant"
+          placeholder="Message Chat MCP"
           rows={2}
           disabled={disabled}
         />
-        <button className="chatgpt-send" type="submit" disabled={disabled || value.trim().length === 0}>
+        <button className="chat-composer__submit" type="submit" disabled={disabled || value.trim().length === 0}>
           Send
         </button>
       </div>
-      <div className="chatgpt-composer-hint">Press Enter to send • Shift + Enter for a new line</div>
+      <div className="chat-composer__hint">Press Enter to send • Shift + Enter for a new line</div>
     </form>
   );
 }

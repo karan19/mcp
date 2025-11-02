@@ -17,25 +17,25 @@ export function ChatMessageList({ messages, userInitials = 'You' }: ChatMessageL
   }, [messages]);
 
   return (
-    <div ref={containerRef} className="chatgpt-conversation-wrapper">
-      <div className="chatgpt-conversation">
+    <div ref={containerRef} className="chat-thread-scroller">
+      <div className="chat-thread">
         {messages.map((message) => {
           const isUser = message.role === 'user';
           const avatarContent = isUser ? userInitials : 'AI';
 
           return (
-            <article key={message.id} className={`chatgpt-message chatgpt-message-${message.role}`}>
-              <div className="chatgpt-message-avatar" aria-hidden>
+            <article key={message.id} className={`chat-bubble ${isUser ? 'chat-bubble--user' : 'chat-bubble--assistant'}`}>
+              <div className="chat-bubble__avatar" aria-hidden>
                 {avatarContent}
               </div>
-              <div className="chatgpt-message-body">
-                <header className="chatgpt-message-meta">
-                  <span className="chatgpt-author">{isUser ? 'You' : 'NexusNote'}</span>
-                  <time className="chatgpt-timestamp" dateTime={message.createdAt}>
+              <div className="chat-bubble__body">
+                <header className="chat-bubble__meta">
+                  <span className="chat-bubble__author">{isUser ? 'You' : 'Chat MCP'}</span>
+                  <time className="chat-bubble__timestamp" dateTime={message.createdAt}>
                     {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </time>
                 </header>
-                <p className="chatgpt-message-content">{message.content}</p>
+                <div className="chat-bubble__content">{message.content}</div>
                 {message.toolCalls?.length ? <ToolCallList toolCalls={message.toolCalls} /> : null}
               </div>
             </article>
@@ -48,18 +48,18 @@ export function ChatMessageList({ messages, userInitials = 'You' }: ChatMessageL
 
 function ToolCallList({ toolCalls }: { toolCalls: ToolCall[] }) {
   return (
-    <div className="chatgpt-tool-call">
-      <p className="chatgpt-tool-heading">Tool output</p>
+    <div className="chat-bubble__tool-call">
+      <p className="chat-bubble__tool-heading">Tool output</p>
       {toolCalls.map((call, index) => (
-        <div key={index} className="chatgpt-tool-item">
-          <div className="chatgpt-tool-header">
-            <span className="chatgpt-tool-chip">Tool</span>
-            <span className="chatgpt-tool-name">{call.toolName}</span>
+        <div key={index} className="chat-bubble__tool-item">
+          <div className="chat-bubble__tool-header">
+            <span className="chat-bubble__tool-chip">Tool</span>
+            <span className="chat-bubble__tool-name">{call.toolName}</span>
           </div>
-          <p className="chatgpt-tool-args">{JSON.stringify(call.arguments, null, 2)}</p>
-          <div className="chatgpt-tool-output">
+          <pre className="chat-bubble__tool-args">{JSON.stringify(call.arguments, null, 2)}</pre>
+          <div className="chat-bubble__tool-output">
             {call.output.map((text, idx) => (
-              <pre key={idx} className="chatgpt-tool-text">
+              <pre key={idx} className="chat-bubble__tool-text">
                 {text}
               </pre>
             ))}

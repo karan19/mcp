@@ -2,10 +2,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import crypto from 'crypto';
 import pino from 'pino';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { BedrockConfig, CognitoConfig } from '../config/env';
+import type { BedrockConfig, CognitoConfig, DynamoTableConfig } from '../config/env';
 import { runChatTurn } from '../ai/orchestrator';
-import { createCognitoVerifier } from './auth';
+import { createCognitoVerifier, type VerifiedUser } from './auth';
 import { toolDefinitions, toolRegistry } from '../tools';
+import { createChatHistoryStore } from './chat-history';
 
 const logger = pino({ name: 'mcp-server', level: 'info' });
 
@@ -14,6 +15,7 @@ interface ServerOptions {
   port: number;
   cognito: CognitoConfig;
   bedrock: BedrockConfig;
+  chatTable: DynamoTableConfig;
 }
 
 interface McpRequestBase {
@@ -36,6 +38,11 @@ interface PingRequest extends McpRequestBase {
 }
 
 type McpRequest = ListToolsRequest | CallToolRequest | PingRequest | McpRequestBase;
+
+interface AuthenticatedUser {
+  sub: string;
+  email?: string;
+}
 
 function applyCors(res: ServerResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -163,7 +170,8 @@ function parseMessage(data: Buffer): McpRequest | null {
 
 function createChatHandler(
   bedrock: BedrockConfig,
-  verifyToken: (token: string) => Promise<{ sub: string; email?: string }>
+  authenticate: (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null>,
+  chatStore: ReturnType<typeof createChatHistoryStore>
 ) {
   return async function handleChat(req: IncomingMessage, res: ServerResponse) {
     if (req.method !== 'POST') {
@@ -171,20 +179,8 @@ function createChatHandler(
       return;
     }
 
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      sendErrorJson(res, 401, 'Missing Authorization header');
-      return;
-    }
-
-    const token = authHeader.slice('Bearer '.length).trim();
-
-    let requester;
-    try {
-      requester = await verifyToken(token);
-    } catch (error) {
-      logger.warn({ err: error }, 'Token verification failed');
-      sendErrorJson(res, 401, 'Invalid token');
+    const requester = await authenticate(req, res);
+    if (!requester) {
       return;
     }
 
@@ -203,18 +199,92 @@ function createChatHandler(
       return;
     }
 
+    const sessionIdRaw = typeof body?.sessionId === 'string' ? body.sessionId.trim() : '';
+    const sessionId = sessionIdRaw.length > 0 ? sessionIdRaw : `${requester.sub}#${crypto.randomUUID()}`;
+    const messageId =
+      typeof body?.messageId === 'string' && body.messageId.trim().length > 0
+        ? body.messageId.trim()
+        : crypto.randomUUID();
+
     logger.info({ user: requester.sub }, 'Received chat turn');
 
     try {
+      const existingMessages = await chatStore.listMessages(sessionId, 200);
+      const unauthorized = existingMessages.some((item) => item.userId !== requester.sub);
+      if (unauthorized) {
+        sendErrorJson(res, 403, 'You do not have access to this conversation.');
+        return;
+      }
+
+      const isFirstMessage = existingMessages.length === 0;
+
+      const userMessageTimestamp = new Date().toISOString();
+
+      await chatStore.putMessage({
+        sessionId,
+        createdAt: userMessageTimestamp,
+        messageId,
+        role: 'user',
+        content: message,
+        userId: requester.sub,
+      });
+
+      await chatStore.upsertSummary({
+        sessionId,
+        userId: requester.sub,
+        lastMessageAt: userMessageTimestamp,
+        lastRole: 'user',
+        lastMessagePreview: buildMessagePreview(message),
+        title: isFirstMessage ? buildSessionTitle(message) : undefined,
+      });
+
+      const historyForModel = existingMessages
+        .filter((entry) => entry.role === 'user' || entry.role === 'assistant')
+        .map((entry) => ({
+          role: entry.role as 'user' | 'assistant',
+          content: entry.content,
+        }));
+
       const result = await runChatTurn({
         userMessage: message,
+        history: historyForModel,
         bedrock,
         toolDefinitions,
         toolRegistry,
         logger,
       });
 
+      const assistantReply =
+        typeof result.reply === 'string' ? result.reply : JSON.stringify(result.reply, null, 2);
+
+      let assistantMessageTimestamp = new Date().toISOString();
+      if (assistantMessageTimestamp <= userMessageTimestamp) {
+        assistantMessageTimestamp = new Date(Date.parse(userMessageTimestamp) + 1).toISOString();
+      }
+
+      await chatStore.putMessage({
+        sessionId,
+        createdAt: assistantMessageTimestamp,
+        messageId: crypto.randomUUID(),
+        role: 'assistant',
+        content: assistantReply,
+        userId: requester.sub,
+        metadata: {
+          toolCalls: result.toolCalls,
+          rawReply: result.reply,
+        },
+      });
+
+      await chatStore.upsertSummary({
+        sessionId,
+        userId: requester.sub,
+        lastMessageAt: assistantMessageTimestamp,
+        lastRole: 'assistant',
+        lastMessagePreview: buildMessagePreview(assistantReply),
+      });
+
       sendJson(res, 200, {
+        sessionId,
         reply: result.reply,
         toolCalls: result.toolCalls,
       });
@@ -226,9 +296,11 @@ function createChatHandler(
 }
 
 export function createMcpServer(options: ServerOptions) {
-  const { host, port, cognito, bedrock } = options;
+  const { host, port, cognito, bedrock, chatTable } = options;
   const verifyToken = createCognitoVerifier(cognito);
-  const chatHandler = createChatHandler(bedrock, verifyToken);
+  const chatHistoryStore = createChatHistoryStore(chatTable);
+  const authenticate = createAuthenticator(verifyToken);
+  const chatHandler = createChatHandler(bedrock, authenticate, chatHistoryStore);
 
   const httpServer = createServer(async (req, res) => {
     applyCors(res);
@@ -239,14 +311,74 @@ export function createMcpServer(options: ServerOptions) {
       return;
     }
 
-    const url = req.url ?? '/';
-    if (req.method === 'GET' && url.startsWith('/health')) {
+    const requestUrl = new URL(req.url ?? '/', 'http://localhost');
+    const path = requestUrl.pathname;
+
+    if (req.method === 'GET' && path.startsWith('/health')) {
       sendJson(res, 200, { status: 'ok' });
       return;
     }
 
-    if (req.method === 'POST' && url === '/chat') {
+    if (req.method === 'POST' && path === '/chat') {
       await chatHandler(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && path === '/conversations') {
+      const requester = await authenticate(req, res);
+      if (!requester) {
+        return;
+      }
+
+      try {
+        const conversations = await chatHistoryStore.listSummariesForUser(requester.sub);
+        sendJson(res, 200, { conversations });
+      } catch (error) {
+        logger.error({ err: error, user: requester.sub }, 'Failed to list conversations');
+        sendErrorJson(res, 500, 'Failed to load conversations');
+      }
+      return;
+    }
+
+    const messagesMatch = path.match(/^\/conversations\/([^/]+)\/messages$/);
+    if (req.method === 'GET' && messagesMatch) {
+      const sessionId = decodeURIComponent(messagesMatch[1]);
+      const requester = await authenticate(req, res);
+      if (!requester) {
+        return;
+      }
+
+      const limitParam = requestUrl.searchParams.get('limit');
+      const limit = limitParam ? clampLimit(limitParam) : undefined;
+
+      try {
+        const summary = await chatHistoryStore.getSummary(sessionId);
+        if (summary && summary.userId !== requester.sub) {
+          sendErrorJson(res, 403, 'You do not have access to this conversation.');
+          return;
+        }
+
+        const messages = await chatHistoryStore.listMessages(sessionId, limit);
+        if (!summary && messages.length === 0) {
+          sendErrorJson(res, 404, 'Conversation not found');
+          return;
+        }
+
+        const unauthorized = messages.some((message) => message.userId !== requester.sub);
+        if (unauthorized) {
+          sendErrorJson(res, 403, 'You do not have access to this conversation.');
+          return;
+        }
+
+        sendJson(res, 200, {
+          sessionId,
+          messages,
+          summary: summary ?? null,
+        });
+      } catch (error) {
+        logger.error({ err: error, user: requester.sub, sessionId }, 'Failed to load conversation messages');
+        sendErrorJson(res, 500, 'Failed to load messages');
+      }
       return;
     }
 
@@ -294,4 +426,87 @@ export function createMcpServer(options: ServerOptions) {
   }
 
   return { start };
+}
+
+function getAuthorizationHeader(req: IncomingMessage): string | null {
+  const header = req.headers.authorization ?? req.headers.Authorization;
+  if (!header) {
+    return null;
+  }
+  return Array.isArray(header) ? header[0] : header;
+}
+
+function extractBearerToken(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const prefix = /^bearer\s+/i;
+  if (prefix.test(trimmed)) {
+    return trimmed.replace(prefix, '').trim();
+  }
+
+  return null;
+}
+
+function createAuthenticator(
+  verifyToken: (token: string) => Promise<VerifiedUser>
+): (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null> {
+  return async function authenticate(req, res) {
+    const header = getAuthorizationHeader(req);
+    const token = extractBearerToken(header);
+
+    if (!token) {
+      sendErrorJson(res, 401, 'Missing or invalid Authorization header.');
+      return null;
+    }
+
+    try {
+      const verified = await verifyToken(token);
+      return {
+        sub: verified.sub,
+        email: verified.email,
+      };
+    } catch (error) {
+      logger.warn({ err: error }, 'Token verification failed');
+      sendErrorJson(res, 401, 'Invalid or expired token.');
+      return null;
+    }
+  };
+}
+
+function buildMessagePreview(text: string, maxLength = 180): string {
+  const trimmed = text.trim().replace(/\s+/g, ' ');
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  const sliceLength = Math.max(0, maxLength - 3);
+  return `${trimmed.slice(0, sliceLength).trimEnd()}...`;
+}
+
+function buildSessionTitle(text: string): string {
+  const preview = buildMessagePreview(text, 80);
+  if (!preview) {
+    return 'New chat';
+  }
+  return preview;
+}
+
+function clampLimit(raw: string): number | undefined {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return Math.min(Math.floor(parsed), 500);
 }
