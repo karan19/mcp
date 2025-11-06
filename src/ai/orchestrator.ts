@@ -40,9 +40,15 @@ function buildToolCatalog(toolDefinitions: McpToolDefinition[]): string {
   }
 
   return toolDefinitions
-    .map((tool) => tool.friendlyName ?? tool.name)
+    .map((tool) => {
+      const friendly = tool.friendlyName;
+      if (friendly && friendly !== tool.name) {
+        return `- ${friendly} (tool id: ${tool.name})`;
+      }
+      return `- ${tool.name}`;
+    })
     .sort((a, b) => a.localeCompare(b))
-    .join(', ');
+    .join('\n');
 }
 
 function extractFirstJsonObject(raw: string): string | null {
@@ -122,6 +128,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     '',
     'Instructions:',
     '- If the user is asking about your own capabilities (e.g., "what tools can you use"), do not call an external tool. Instead, respond with JSON: {"action":"respond","response":"<natural language answer>"}. When you list tools, output a comma-separated list of tool names. When a friendly name exists, use it; otherwise use the tool id.',
+    '- Tool ids are the identifiers shown in parentheses above (e.g., "tool id: query.dynamodb.example"). When returning {"action":"call_tool",...}, always use the tool id value exactly.',
     '- If an external tool is needed, respond with {"action":"call_tool","tool":"<tool_name>","arguments":{...}}.',
     '- If you can answer immediately without a tool, respond with {"action":"respond","response":"<answer>"} in plain English.',
     '- Prefer calling tools when the question needs fresh or factual data.'
