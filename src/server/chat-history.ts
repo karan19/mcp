@@ -146,8 +146,6 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
         '#updatedAt': 'updatedAt',
         '#lastRole': 'lastRole',
         '#lastMessagePreview': 'lastMessagePreview',
-        '#sessionId': 'sessionId',
-        '#createdAt': 'createdAt',
       };
 
       const updateValues: Record<string, unknown> = {
@@ -157,20 +155,24 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
         ':updatedAt': now,
         ':lastRole': lastRole ?? null,
         ':lastMessagePreview': lastMessagePreview ?? null,
-        ':sessionId': sessionId,
-        ':createdAt': lastMessageAt,
       };
 
       const setExpressions: string[] = [
-        '#sessionId = :sessionId',
         '#itemType = :itemType',
         '#userId = :userId',
         '#lastMessageAt = :lastMessageAt',
         '#updatedAt = :updatedAt',
         '#lastRole = :lastRole',
         '#lastMessagePreview = :lastMessagePreview',
-        '#createdAt = if_not_exists(#createdAt, :createdAt)',
       ];
+
+      const canUpdateCreatedAt =
+        sortKeyName !== 'createdAt' && gsiPartitionKey !== 'createdAt' && gsiSortKey !== 'createdAt';
+      if (canUpdateCreatedAt) {
+        updateNames['#createdAt'] = 'createdAt';
+        updateValues[':createdAt'] = lastMessageAt;
+        setExpressions.push('#createdAt = if_not_exists(#createdAt, :createdAt)');
+      }
 
       if (title !== undefined) {
         updateNames['#title'] = 'title';
@@ -179,15 +181,22 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
       }
 
       if (gsiPartitionKey) {
-        updateNames['#gsiPk'] = gsiPartitionKey;
-        updateValues[':gsiPk'] = userId;
-        setExpressions.push('#gsiPk = :gsiPk');
+        if (gsiPartitionKey !== 'userId') {
+          updateNames['#gsiPk'] = gsiPartitionKey;
+          updateValues[':gsiPk'] = userId;
+          setExpressions.push('#gsiPk = :gsiPk');
+        }
       }
 
       if (gsiSortKey) {
-        updateNames['#gsiSk'] = gsiSortKey;
-        updateValues[':gsiSk'] = lastMessageAt;
-        setExpressions.push('#gsiSk = :gsiSk');
+        if (gsiSortKey === 'lastMessageAt') {
+          // already handled via #lastMessageAt assignment above
+          updateValues[':lastMessageAt'] = lastMessageAt;
+        } else {
+          updateNames['#gsiSk'] = gsiSortKey;
+          updateValues[':gsiSk'] = lastMessageAt;
+          setExpressions.push('#gsiSk = :gsiSk');
+        }
       }
 
       await dynamoDocumentClient.send(
