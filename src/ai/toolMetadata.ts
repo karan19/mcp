@@ -6,70 +6,70 @@ export interface ToolMetadataOverride {
 export const TOOL_METADATA: Record<string, ToolMetadataOverride> = {
   'search.web': {
     friendlyName: 'Open Web Search',
-    description: 'Search the public web via Google/SerpAPI and return the top snippets.',
+    description: 'Use this when the user asks to search the public web (Google/SerpAPI) for up-to-date info.',
   },
   'search.wikipedia': {
     friendlyName: 'Wikipedia Lookup',
-    description: 'Look up Wikipedia articles and summarize the top matches.',
+    description: 'Use this when the user wants background info that can be satisfied with Wikipedia summaries.',
   },
   'search.arxiv': {
     friendlyName: 'arXiv Paper Search',
-    description: 'Find academic papers on arXiv and summarize their abstracts.',
+    description: 'Use this whenever the user asks for academic or research papers from arXiv.',
   },
   'query.dynamodb.nexusnote_before_i_forget_production': {
     friendlyName: 'Before I Forget Reminders',
-    description: 'List reminder entries captured in the “Before I Forget” flow.',
+    description: 'Call this when the user wants to list, read, or search their “Before I Forget” reminders.',
   },
   'query.dynamodb.nexusnote_chat_conversations_production': {
     friendlyName: 'Chat Conversations',
-    description: 'Inspect stored chat conversations and their metadata.',
+    description: 'Use when the user requests a list or details of their chat conversations.',
   },
   'query.dynamodb.nexusnote_debate_sessions_production': {
     friendlyName: 'Debate Sessions',
-    description: 'Retrieve debate sessions along with topic and status info.',
+    description: 'Use when the user asks about debate sessions, topics, or statuses.',
   },
   'query.dynamodb.nexusnote_debate_turns_production': {
     friendlyName: 'Debate Turns',
-    description: 'Fetch individual turns within a debate session.',
+    description: 'Use when the user wants the individual turns for a debate session.',
   },
   'query.dynamodb.nexusnote_implementation_projects_production': {
     friendlyName: 'Implementation Projects',
-    description: 'List implementation projects that are tracked per user.',
+    description: 'Use when the user asks to list or review their implementation projects.',
   },
   'query.dynamodb.nexusnote_inno_contacts_production': {
     friendlyName: 'Innovation Contacts',
-    description: 'Review innovation contacts and their latest updates.',
+    description: 'Use when the user wants to review their innovation contacts or their latest updates.',
   },
   'query.dynamodb.nexusnote_notes_production': {
     friendlyName: 'Notes',
-    description: 'Query all captured notes for the current user.',
+    description: 'Use whenever the user says “my notes”, “all notes”, “list my notes”, or similar.',
   },
   'query.dynamodb.nexusnote_personas_production': {
     friendlyName: 'AI Personas',
-    description: 'Inspect configured AI personas and their settings.',
+    description: 'Use when the user wants to list or inspect their configured AI personas.',
   },
   'query.dynamodb.nexusnote_shared_data_production': {
     friendlyName: 'Shared Mindmaps',
-    description: 'Retrieve shared mindmaps and node data.',
+    description: 'Use when the user requests mindmaps or shared node data.',
   },
   'query.dynamodb.nexusnote_soliloquies_production': {
     friendlyName: 'Soliloquies',
-    description: 'List soliloquy recordings associated with the user.',
+    description: 'Use when the user mentions their soliloquies or personal recordings.',
   },
   'query.dynamodb.nexusnote_thought_tags_production': {
     friendlyName: 'Thought Tags',
-    description: 'Summarize thought tags, usage counts, and timestamps.',
+    description: 'Use when the user wants counts or metadata about their thought tags.',
   },
   'query.dynamodb.nexusnote_thoughts_production': {
     friendlyName: 'Thoughts',
-    description: 'Query thought entries captured by the user.',
+    description: 'Use when the user asks for their thought entries (“list my thoughts”, “show thoughts”, etc.).',
   },
   'query.dynamodb.nexusnote_tracking_workboard_production': {
     friendlyName: 'Tracking Workboard',
-    description: 'Inspect workboard slots, chains, and tasks.',
+    description: 'Use when the user wants workboard slots, chains, or tasks.',
   },
   'query.dynamodb.ghostinfrastack_poststablec82b36f0_1oy982xqpej9x': {
     friendlyName: 'Ghost Posts',
-    description: 'Query Ghost CMS posts stored in the DynamoDB posts table.',
+    description: 'Use when the user wants to look up Ghost CMS posts or render post content.',
   },
 };

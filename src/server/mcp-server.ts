@@ -183,6 +183,7 @@ function createChatHandler(
     if (!requester) {
       return;
     }
+    logger.info({ user: requester.sub }, 'Authenticated chat request');
 
     let body: any;
     try {
@@ -198,6 +199,7 @@ function createChatHandler(
       sendErrorJson(res, 400, 'message is required');
       return;
     }
+    logger.info({ user: requester.sub, messagePreview: message.slice(0, 120) }, 'Parsed chat message body');
 
     const sessionIdRaw = typeof body?.sessionId === 'string' ? body.sessionId.trim() : '';
     const sessionId = sessionIdRaw.length > 0 ? sessionIdRaw : `${requester.sub}#${crypto.randomUUID()}`;
@@ -215,6 +217,7 @@ function createChatHandler(
         sendErrorJson(res, 403, 'You do not have access to this conversation.');
         return;
       }
+      logger.info({ user: requester.sub, sessionId, existingMessages: existingMessages.length }, 'Loaded existing conversation history');
 
       const isFirstMessage = existingMessages.length === 0;
 
@@ -228,6 +231,7 @@ function createChatHandler(
         content: message,
         userId: requester.sub,
       });
+      logger.info({ user: requester.sub, sessionId, messageId, timestamp: userMessageTimestamp }, 'Stored user message');
 
       await chatStore.upsertSummary({
         sessionId,
@@ -237,6 +241,7 @@ function createChatHandler(
         lastMessagePreview: buildMessagePreview(message),
         title: isFirstMessage ? buildSessionTitle(message) : undefined,
       });
+      logger.info({ user: requester.sub, sessionId }, 'Updated session summary after user message');
 
       const historyForModel = existingMessages
         .filter((entry) => entry.role === 'user' || entry.role === 'assistant')
@@ -254,6 +259,7 @@ function createChatHandler(
         logger,
         currentUserId: requester.sub,
       });
+      logger.info({ user: requester.sub, sessionId, toolCalls: result.toolCalls }, 'runChatTurn completed');
 
       const assistantReply =
         typeof result.reply === 'string' ? result.reply : JSON.stringify(result.reply, null, 2);
@@ -275,6 +281,7 @@ function createChatHandler(
           rawReply: result.reply,
         },
       });
+      logger.info({ user: requester.sub, sessionId, timestamp: assistantMessageTimestamp }, 'Stored assistant reply');
 
       await chatStore.upsertSummary({
         sessionId,
@@ -283,12 +290,14 @@ function createChatHandler(
         lastRole: 'assistant',
         lastMessagePreview: buildMessagePreview(assistantReply),
       });
+      logger.info({ user: requester.sub, sessionId }, 'Updated session summary after assistant reply');
 
       sendJson(res, 200, {
         sessionId,
         reply: result.reply,
         toolCalls: result.toolCalls,
       });
+      logger.info({ user: requester.sub, sessionId }, 'Sent chat response to client');
     } catch (error) {
       logger.error({ err: error }, 'Chat orchestrator failed');
       sendErrorJson(res, 500, 'Failed to process chat request');

@@ -37,25 +37,31 @@ export interface RunChatTurnResult {
   toolCalls: ToolCallRecord[];
 }
 
-function extractFirstJsonObject(raw: string): string | null {
-  const startIdx = raw.indexOf('{');
-  if (startIdx === -1) {
-    return null;
-  }
-
-  let depth = 0;
-  for (let i = startIdx; i < raw.length; i += 1) {
-    const char = raw[i];
-    if (char === '{') {
-      depth += 1;
-    } else if (char === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return raw.slice(startIdx, i + 1);
+function extractJsonObjects(raw: string): string[] {
+  const objects: string[] = [];
+  let startIdx = raw.indexOf('{');
+  while (startIdx !== -1) {
+    let depth = 0;
+    let endIdx = -1;
+    for (let i = startIdx; i < raw.length; i += 1) {
+      const char = raw[i];
+      if (char === '{') {
+        depth += 1;
+      } else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          endIdx = i + 1;
+          break;
+        }
       }
     }
+    if (endIdx === -1) {
+      break;
+    }
+    objects.push(raw.slice(startIdx, endIdx));
+    startIdx = raw.indexOf('{', endIdx);
   }
-  return null;
+  return objects;
 }
 
 function parseModelJsonResponse(raw: string): FirstPassDecision {
@@ -66,7 +72,7 @@ function parseModelJsonResponse(raw: string): FirstPassDecision {
   if (codeFenceMatch && codeFenceMatch[1]) {
     candidate = codeFenceMatch[1];
   } else {
-    const extracted = extractFirstJsonObject(candidate);
+    const extracted = extractJsonObjects(candidate)[0];
     if (extracted) {
       candidate = extracted;
     }
@@ -108,6 +114,14 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     historyTranscript,
     catalogText: toolCatalogText,
   });
+  logger.info(
+    {
+      userMessage,
+      historyTranscript,
+      toolCatalog: toolCatalogText,
+    },
+    'Planner decision prompt built'
+  );
 
   const decisionMessages: ChatMessage[] = [
     {
@@ -126,6 +140,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     maxOutputTokens: 256,
     temperature: 0,
   });
+  logger.info({ decisionRaw }, 'Planner raw decision output');
 
   let decision: FirstPassDecision;
   try {
@@ -137,8 +152,25 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
       response: decisionRaw,
     };
   }
+  if (decision.action === 'respond' && decisionRaw.includes('"action"') && decisionRaw.includes('"call_tool"')) {
+    const objects = extractJsonObjects(decisionRaw);
+    for (const obj of objects) {
+      try {
+        const parsed = JSON.parse(obj) as FirstPassDecision;
+        if (parsed.action === 'call_tool' && parsed.tool) {
+          logger.info({ parsed }, 'Found embedded call_tool decision after initial respond');
+          decision = parsed;
+          break;
+        }
+      } catch (err) {
+        logger.warn({ err, snippet: obj }, 'Failed to parse embedded JSON object in decision output');
+      }
+    }
+  }
+  logger.info({ decision }, 'Planner parsed decision');
 
   if (decision.action === 'respond' && decision.response) {
+    logger.info({ response: decision.response }, 'Planner responded directly without tool call');
     return {
       reply: decision.response,
       toolCalls: [],
@@ -146,6 +178,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
   }
 
   if (decision.action === 'call_tool' && decision.tool) {
+    logger.info({ tool: decision.tool, arguments: decision.arguments }, 'Planner requested tool call');
     const entry = toolRegistry[decision.tool];
     if (!entry) {
       logger.warn({ tool: decision.tool }, 'Model requested unknown tool');
@@ -170,6 +203,14 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     }
 
     const toolSummary = summarizeToolOutput(handlerResult.content);
+    logger.info(
+      {
+        tool: decision.tool,
+        arguments: decision.arguments,
+        output: toolSummary,
+      },
+      'Tool invocation succeeded'
+    );
 
     const answerPrompt = buildAnswerPrompt({
       toolId: decision.tool,
@@ -195,6 +236,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
       maxOutputTokens: bedrock.maxOutputTokens,
       temperature: bedrock.temperature,
     });
+    logger.info({ tool: decision.tool, answerRaw }, 'Assistant composed response from tool output');
 
     return {
       reply: answerRaw,
