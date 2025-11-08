@@ -252,6 +252,7 @@ function createChatHandler(
         toolDefinitions,
         toolRegistry,
         logger,
+        currentUserId: requester.sub,
       });
 
       const assistantReply =

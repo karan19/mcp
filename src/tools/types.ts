@@ -19,6 +19,7 @@ export interface McpToolResult {
 
 export interface ToolContext {
   logger: { info: (obj: any, msg?: string) => void; error: (obj: any, msg?: string) => void; warn: (obj: any, msg?: string) => void; debug: (obj: any, msg?: string) => void };
+  currentUserId?: string;
 }
 
 export type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Promise<McpToolResult>;

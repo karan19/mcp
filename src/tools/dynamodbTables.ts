@@ -211,8 +211,22 @@ const dynamoTableTools: ToolEntry[] = envConfig.dynamodbTables.map((table) => {
   };
 
   const handler: ToolHandler = async (args, context) => {
+    const normalizedArgs = { ...args };
+    if (
+      table.partitionKey.toLowerCase() === 'userid' &&
+      (normalizedArgs[table.partitionKey] === undefined || normalizedArgs[table.partitionKey] === '')
+    ) {
+      if (context.currentUserId) {
+        normalizedArgs[table.partitionKey] = context.currentUserId;
+      } else {
+        throw new Error(
+          `The partition key "${table.partitionKey}" is required. Please provide a value or ensure the user is authenticated.`
+        );
+      }
+    }
+
     try {
-      const output = await queryTable(table.tableName, table.partitionKey, table.sortKey, args);
+      const output = await queryTable(table.tableName, table.partitionKey, table.sortKey, normalizedArgs);
       return {
         content: [
           {

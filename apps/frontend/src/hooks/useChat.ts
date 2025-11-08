@@ -245,11 +245,19 @@ function formatReply(reply: unknown): string {
     'tools' in reply &&
     Array.isArray((reply as { tools?: unknown }).tools)
   ) {
-    const tools = (reply as { tools: Array<{ name: string; description: string }> }).tools;
+    const tools = (reply as {
+      tools: Array<{ name?: string; friendlyName?: string; description?: string }>;
+    }).tools;
     if (!tools.length) {
       return 'I do not have any tools available right now.';
     }
-    const list = tools.map((tool) => `• ${tool.name}: ${tool.description}`).join('\n');
+    const list = tools
+      .map((tool) => {
+        const label = tool.name ?? tool.friendlyName ?? 'Unnamed tool';
+        const description = tool.description ?? 'No description available.';
+        return `• ${label}: ${description}`;
+      })
+      .join('\n');
     return `Here are the tools I can use:\n${list}`;
   }
 

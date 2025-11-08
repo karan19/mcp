@@ -2,6 +2,8 @@ import type { Logger } from 'pino';
 import type { BedrockConfig } from '../config/env';
 import type { McpToolDefinition, ToolRegistryEntry } from '../tools';
 import { invokeModel, type ChatMessage } from './bedrock';
+import { buildToolCatalog, formatToolCatalog } from './toolCatalog';
+import { buildAnswerPrompt, buildDecisionPrompt, summarizeToolOutput } from './toolPrompts';
 
 interface ToolRegistry {
   [name: string]: ToolRegistryEntry;
@@ -27,28 +29,12 @@ export interface RunChatTurnOptions {
   toolDefinitions: McpToolDefinition[];
   toolRegistry: ToolRegistry;
   logger: Logger;
+  currentUserId?: string;
 }
 
 export interface RunChatTurnResult {
   reply: string | { tools: Array<{ name: string; description: string }> };
   toolCalls: ToolCallRecord[];
-}
-
-function buildToolCatalog(toolDefinitions: McpToolDefinition[]): string {
-  if (!toolDefinitions.length) {
-    return 'No tools are available.';
-  }
-
-  return toolDefinitions
-    .map((tool) => {
-      const friendly = tool.friendlyName;
-      if (friendly && friendly !== tool.name) {
-        return `- ${friendly} (tool id: ${tool.name})`;
-      }
-      return `- ${tool.name}`;
-    })
-    .sort((a, b) => a.localeCompare(b))
-    .join('\n');
 }
 
 function extractFirstJsonObject(raw: string): string | null {
@@ -107,7 +93,8 @@ function parseModelJsonResponse(raw: string): FirstPassDecision {
 export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatTurnResult> {
   const { userMessage, history = [], bedrock, toolDefinitions, toolRegistry, logger } = options;
 
-  const toolCatalog = buildToolCatalog(toolDefinitions);
+  const catalogEntries = buildToolCatalog(toolDefinitions);
+  const toolCatalogText = formatToolCatalog(catalogEntries);
   const relevantHistory = history.slice(-10);
   const historyTranscript = relevantHistory
     .map((entry) => {
@@ -116,25 +103,11 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     })
     .join('\n');
 
-  const decisionParts: string[] = [];
-  if (historyTranscript) {
-    decisionParts.push('Conversation so far:', historyTranscript, '');
-  }
-  decisionParts.push(
-    `User message: ${userMessage}`,
-    '',
-    'Available tools:',
-    toolCatalog,
-    '',
-    'Instructions:',
-    '- If the user is asking about your own capabilities (e.g., "what tools can you use"), do not call an external tool. Instead, respond with JSON: {"action":"respond","response":"<natural language answer>"}. When you list tools, output a comma-separated list of tool names. When a friendly name exists, use it; otherwise use the tool id.',
-    '- Tool ids are the identifiers shown in parentheses above (e.g., "tool id: query.dynamodb.example"). When returning {"action":"call_tool",...}, always use the tool id value exactly.',
-    '- If an external tool is needed, respond with {"action":"call_tool","tool":"<tool_name>","arguments":{...}}.',
-    '- If you can answer immediately without a tool, respond with {"action":"respond","response":"<answer>"} in plain English.',
-    '- Prefer calling tools when the question needs fresh or factual data.'
-  );
-
-  const decisionPrompt = decisionParts.join('\n');
+  const decisionPrompt = buildDecisionPrompt({
+    userMessage,
+    historyTranscript,
+    catalogText: toolCatalogText,
+  });
 
   const decisionMessages: ChatMessage[] = [
     {
@@ -186,6 +159,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     try {
       handlerResult = await entry.handler(decision.arguments ?? {}, {
         logger,
+        currentUserId: options.currentUserId,
       });
     } catch (error) {
       logger.error({ err: error, tool: decision.tool }, 'Tool invocation failed');
@@ -195,30 +169,14 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
       };
     }
 
-    const toolTexts = handlerResult.content.map((item) => item.text);
-    const toolSummary = toolTexts.join('\n\n');
+    const toolSummary = summarizeToolOutput(handlerResult.content);
 
-    const answerParts: string[] = [
-      `You requested tool "${decision.tool}" to help answer a question.`,
-    ];
-
-    if (historyTranscript) {
-      answerParts.push('Previous conversation context:', historyTranscript, '');
-    }
-
-    answerParts.push(
-      `User message: ${userMessage}`,
-      '',
-      'Tool output:',
-      toolSummary,
-      '',
-      'Compose a helpful answer using only the tool output.',
-      `- Cite the source as (${decision.tool}) when referencing the data.`,
-      '- Do not introduce external information or definitions unless they appear in the tool output.',
-      '- Skip generic disclaimers about accuracy.'
-    );
-
-    const answerPrompt = answerParts.join('\n');
+    const answerPrompt = buildAnswerPrompt({
+      toolId: decision.tool,
+      userMessage,
+      historyTranscript,
+      toolOutput: toolSummary,
+    });
 
     const answerMessages: ChatMessage[] = [
       {
@@ -244,7 +202,9 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
         {
           toolName: decision.tool,
           arguments: decision.arguments ?? {},
-          output: toolTexts,
+          output: handlerResult.content
+            .map((item) => (typeof item.text === 'string' ? item.text : ''))
+            .filter((text) => text.length > 0),
         },
       ],
     };
