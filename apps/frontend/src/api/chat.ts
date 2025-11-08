@@ -69,3 +69,24 @@ export async function fetchConversationMessages(
     summary: payload.summary ?? null,
   };
 }
+
+export async function deleteConversationRequest(
+  sessionId: string,
+  getIdToken: () => Promise<string | null>
+) {
+  const headers = await buildAuthHeaders(getIdToken);
+  const response = await fetch(`${appConfig.apiBaseUrl}/conversations/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    headers,
+  });
+
+  if (response.status === 404) {
+    throw new Error('Conversation not found.');
+  }
+  if (response.status === 403) {
+    throw new Error('You do not have access to this conversation.');
+  }
+  if (!response.ok && response.status !== 204) {
+    throw new Error(`Failed to delete conversation (${response.status})`);
+  }
+}

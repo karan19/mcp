@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { appConfig } from '../config/env';
 import { useAuth } from '../context/AuthContext';
-import { buildAuthHeaders, fetchConversationMessages, fetchConversations } from '../api/chat';
+import {
+  buildAuthHeaders,
+  deleteConversationRequest,
+  fetchConversationMessages,
+  fetchConversations,
+} from '../api/chat';
 import type { ChatMessage, ConversationSummary, PersistedChatMessage, ToolCall } from '../types/chat';
 
 interface SendMessageArgs {
@@ -158,6 +163,27 @@ export function useChatSession() {
     setError(null);
   }, []);
 
+  const deleteConversation = useCallback(
+    async (targetSessionId: string) => {
+      setPending(true);
+      try {
+        await deleteConversationRequest(targetSessionId, getIdToken);
+        setConversations((current) => current.filter((item) => item.sessionId !== targetSessionId));
+        if (sessionId === targetSessionId) {
+          setSessionId(null);
+          setMessages([]);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to delete conversation.';
+        setError(message);
+        throw err;
+      } finally {
+        setPending(false);
+      }
+    },
+    [getIdToken, sessionId]
+  );
+
   const status = useMemo(
     () => ({
       messages,
@@ -176,6 +202,7 @@ export function useChatSession() {
     ...status,
     sendMessage,
     startNewConversation,
+    deleteConversation,
     refreshConversations,
     selectConversation,
   };

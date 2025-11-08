@@ -7,7 +7,8 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "ts-node-dev --respawn src/index.ts",
+    "dev": "node scripts/dev.js",
+    "dev:server": "ts-node-dev --respawn src/index.ts",
     "start:websocket": "node dist/index.js",
     "build": "tsc -p .",
     "dev:frontend": "npm run dev --workspace frontend",

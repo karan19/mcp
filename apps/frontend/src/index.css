@@ -1284,9 +1284,8 @@ textarea {
 
 .modern-sidebar__conversation {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  align-items: flex-start;
+  align-items: center;
+  gap: 0.35rem;
   padding: 0.6rem 0.75rem;
   border-radius: 0.85rem;
   border: 1px solid transparent;
@@ -1317,6 +1316,51 @@ textarea {
 .modern-sidebar__conversation-meta {
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.6);
+}
+
+.modern-sidebar__conversation-trigger {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.modern-sidebar__conversation-trigger:focus-visible {
+  outline: 2px solid rgba(148, 163, 184, 0.4);
+  outline-offset: 2px;
+}
+
+.modern-sidebar__conversation-delete {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 250, 252, 0.8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.modern-sidebar__conversation-delete:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+  transform: translateY(-1px);
+}
+
+.modern-sidebar__conversation-delete:focus-visible {
+  outline: 2px solid rgba(239, 68, 68, 0.45);
+  outline-offset: 2px;
 }
 
 .modern-sidebar__profile {
@@ -1819,6 +1863,16 @@ textarea {
 
 .modern-chat[data-theme='light'] .modern-sidebar__conversation-meta {
   color: #64748b;
+}
+
+.modern-chat[data-theme='light'] .modern-sidebar__conversation-delete {
+  background: rgba(241, 245, 249, 0.95);
+  color: #475569;
+}
+
+.modern-chat[data-theme='light'] .modern-sidebar__conversation-delete:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #b91c1c;
 }
 
 .modern-chat[data-theme='light'] .modern-sidebar__profile {

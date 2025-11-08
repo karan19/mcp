@@ -136,6 +136,18 @@ function MicIcon({ className }: IconProps) {
   );
 }
 
+function TrashIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable="false">
+      <path d="M4 6h12" />
+      <path d="M9 9v6" />
+      <path d="M11 9v6" />
+      <path d="M6 6l1 9a1 1 0 00.99.9h4.02a1 1 0 00.99-.9l1-9" />
+      <path d="M7 6V4h6v2" />
+    </svg>
+  );
+}
+
 export function ChatPage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -152,6 +164,7 @@ export function ChatPage() {
     startNewConversation,
     selectConversation,
     refreshConversations,
+    deleteConversation,
   } = useChatSession();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -218,6 +231,14 @@ export function ChatPage() {
     if (typeof window !== 'undefined' && window.innerWidth < 960) {
       setSidebarOpen(false);
     }
+  };
+
+  const handleConversationDelete = (targetSessionId: string) => {
+    const confirmed = window.confirm('Delete this conversation? This action cannot be undone.');
+    if (!confirmed) {
+      return;
+    }
+    void deleteConversation(targetSessionId);
   };
 
   const handleNewConversation = () => {
@@ -322,17 +343,41 @@ export function ChatPage() {
             {loadingConversations ? <p className="modern-sidebar__hint">Loading conversations…</p> : null}
             {!loadingConversations && conversations.length === 0 ? <p className="modern-sidebar__hint">No conversations yet.</p> : null}
             {conversations.map((conversation) => (
-              <button
+              <div
                 key={conversation.sessionId}
-                type="button"
                 className={`modern-sidebar__conversation${conversation.sessionId === activeConversationId ? ' is-active' : ''}`}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleConversationSelect(conversation.sessionId)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleConversationSelect(conversation.sessionId);
+                  }
+                }}
               >
-                <span className="modern-sidebar__conversation-title">{conversation.title?.trim() || 'Untitled conversation'}</span>
-                <span className="modern-sidebar__conversation-meta">
-                  {formatTimestamp(conversation.lastMessageAt ?? conversation.updatedAt ?? conversation.createdAt)}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  className="modern-sidebar__conversation-trigger"
+                  onClick={() => handleConversationSelect(conversation.sessionId)}
+                >
+                  <span className="modern-sidebar__conversation-title">{conversation.title?.trim() || 'Untitled conversation'}</span>
+                  <span className="modern-sidebar__conversation-meta">
+                    {formatTimestamp(conversation.lastMessageAt ?? conversation.updatedAt ?? conversation.createdAt)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="modern-sidebar__conversation-delete"
+                  aria-label="Delete conversation"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleConversationDelete(conversation.sessionId);
+                  }}
+                >
+                  <TrashIcon className="modern-icon" />
+                </button>
+              </div>
             ))}
           </div>
 

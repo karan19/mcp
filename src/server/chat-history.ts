@@ -1,4 +1,4 @@
-import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchWriteCommand, GetCommand, PutCommand, QueryCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { DynamoTableConfig } from '../config/env';
 
 export type ChatMessageRole = 'user' | 'assistant' | 'system';
@@ -43,6 +43,7 @@ interface ChatHistoryStore {
   upsertSummary(input: ChatSessionSummaryInput): Promise<void>;
   listSummariesForUser(userId: string, limit?: number): Promise<ChatSessionSummary[]>;
   getSummary(sessionId: string): Promise<ChatSessionSummary | null>;
+  deleteConversation(sessionId: string, userId: string): Promise<void>;
 }
 
 function isSummaryItem(sortKeyName: string, item: Record<string, any>): boolean {
@@ -212,7 +213,23 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
 
     async listSummariesForUser(userId, limit) {
       if (!gsiName || !gsiPartitionKey) {
-        throw new Error('Chat history table is missing GSI configuration for listing conversations.');
+        const response = await dynamoDocumentClient.send(
+          new ScanCommand({
+            TableName: tableName,
+            FilterExpression: '#itemType = :summary AND #userId = :userId',
+            ExpressionAttributeNames: {
+              '#itemType': 'itemType',
+              '#userId': 'userId',
+            },
+            ExpressionAttributeValues: {
+              ':summary': SUMMARY_ITEM_TYPE,
+              ':userId': userId,
+            },
+            Limit: limit,
+          })
+        );
+        const items = response.Items ?? [];
+        return items.map((item) => toSummary(item as Record<string, any>));
       }
 
       const response = await dynamoDocumentClient.send(
@@ -255,6 +272,59 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
       }
 
       return toSummary(response.Item as Record<string, any>);
+    },
+
+    async deleteConversation(sessionId, userId) {
+      const summary = await this.getSummary(sessionId);
+      if (!summary) {
+        throw new Error('Conversation not found.');
+      }
+      if (summary.userId !== userId) {
+        throw new Error('You do not have access to this conversation.');
+      }
+
+      const response = await dynamoDocumentClient.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: '#pk = :pk',
+          ExpressionAttributeNames: {
+            '#pk': partitionKey,
+          },
+          ExpressionAttributeValues: {
+            ':pk': sessionId,
+          },
+        })
+      );
+
+      const items = response.Items ?? [];
+      if (items.length === 0) {
+        return;
+      }
+
+      const keys = items.map((item) => {
+        const keyEntry: Record<string, unknown> = {
+          [partitionKey]: sessionId,
+        };
+        if (hasSortKey && sortKeyName in item) {
+          keyEntry[sortKeyName] = item[sortKeyName];
+        }
+        return keyEntry;
+      });
+
+      for (let i = 0; i < keys.length; i += 25) {
+        const chunk = keys.slice(i, i + 25);
+        await dynamoDocumentClient.send(
+          new BatchWriteCommand({
+            RequestItems: {
+              [tableName]: chunk.map((keyEntry) => ({
+                DeleteRequest: {
+                  Key: keyEntry,
+                },
+              })),
+            },
+          })
+        );
+      }
     },
   };
 }

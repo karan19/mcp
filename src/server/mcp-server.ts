@@ -350,6 +350,34 @@ export function createMcpServer(options: ServerOptions) {
       return;
     }
 
+    const deleteConversationMatch = path.match(/^\/conversations\/([^/]+)$/);
+    if (req.method === 'DELETE' && deleteConversationMatch) {
+      const sessionId = decodeURIComponent(deleteConversationMatch[1]);
+      const requester = await authenticate(req, res);
+      if (!requester) {
+        return;
+      }
+
+      try {
+        await chatHistoryStore.deleteConversation(sessionId, requester.sub);
+        res.writeHead(204);
+        res.end();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to delete conversation';
+        if (message === 'Conversation not found.') {
+          sendErrorJson(res, 404, 'Conversation not found.');
+          return;
+        }
+        if (message === 'You do not have access to this conversation.') {
+          sendErrorJson(res, 403, 'You do not have access to this conversation.');
+          return;
+        }
+        logger.error({ err: error, user: requester.sub, sessionId }, 'Failed to delete conversation');
+        sendErrorJson(res, 500, 'Failed to delete conversation');
+      }
+      return;
+    }
+
     const messagesMatch = path.match(/^\/conversations\/([^/]+)\/messages$/);
     if (req.method === 'GET' && messagesMatch) {
       const sessionId = decodeURIComponent(messagesMatch[1]);

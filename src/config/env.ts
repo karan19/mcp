@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 export interface CognitoConfig {
   region: string;
   userPoolId: string;
@@ -27,6 +30,42 @@ export interface EnvConfig {
   bedrock: BedrockConfig;
   dynamodbTables: DynamoTableConfig[];
 }
+
+let localEnvLoaded = false;
+
+function loadLocalEnv() {
+  if (localEnvLoaded) {
+    return;
+  }
+  localEnvLoaded = true;
+
+  const envPath = path.resolve(process.cwd(), '.env.local');
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  try {
+    const contents = fs.readFileSync(envPath, 'utf8');
+    contents
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'))
+      .forEach((line) => {
+        const [key, ...rest] = line.split('=');
+        if (!key) {
+          return;
+        }
+        const value = rest.join('=').trim();
+        if (value && process.env[key] === undefined) {
+          process.env[key] = value;
+        }
+      });
+  } catch (error) {
+    console.warn('Failed to load .env.local', error);
+  }
+}
+
+loadLocalEnv();
 
 function readRequiredEnv(name: string): string {
   const value = process.env[name];
