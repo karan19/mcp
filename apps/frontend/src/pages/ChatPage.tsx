@@ -173,7 +173,6 @@ export function ChatPage() {
     sendMessage,
     startNewConversation,
     selectConversation,
-    refreshConversations,
     deleteConversation,
     searchConversations,
   } = useChatSession();
@@ -310,12 +309,6 @@ export function ChatPage() {
     if (typeof window !== 'undefined' && window.innerWidth < 960) {
       setSidebarOpen(false);
     }
-  };
-
-  const handleRefreshConversations = () => {
-    refreshConversations().catch(() => {
-      /* handled in state */
-    });
   };
 
   const openSearchOverlay = () => {
