@@ -111,6 +111,10 @@ export async function searchConversationMessages(
     headers,
   });
 
+  if (response.status === 404) {
+    throw new Error('Conversation search is not available on this server yet.');
+  }
+
   if (!response.ok) {
     throw new Error(`Failed to search conversations (${response.status})`);
   }

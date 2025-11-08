@@ -7,6 +7,7 @@ import { dynamoDocumentClient } from '../datasources/dynamo';
 
 const SUMMARY_SORT_KEY = '__SUMMARY__';
 const SUMMARY_ITEM_TYPE = 'summary';
+const SUMMARY_CREATED_AT_ATTR = 'summaryCreatedAt';
 
 export interface PersistedChatMessage {
   sessionId: string;
@@ -93,16 +94,23 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
     metadata: item.metadata,
   });
 
-  const toSummary = (item: Record<string, any>): ChatSessionSummary => ({
-    sessionId: item.sessionId,
-    userId: item.userId,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    lastMessageAt: item.lastMessageAt,
-    lastRole: item.lastRole,
-    lastMessagePreview: item.lastMessagePreview,
-    title: item.title,
-  });
+  const toSummary = (item: Record<string, any>): ChatSessionSummary => {
+    const rawCreatedAt = item[SUMMARY_CREATED_AT_ATTR] ?? item.createdAt;
+    const createdAt =
+      typeof rawCreatedAt === 'string' && rawCreatedAt !== SUMMARY_SORT_KEY
+        ? rawCreatedAt
+        : item.lastMessageAt ?? item.updatedAt ?? new Date().toISOString();
+    return {
+      sessionId: item.sessionId,
+      userId: item.userId,
+      createdAt,
+      updatedAt: item.updatedAt,
+      lastMessageAt: item.lastMessageAt,
+      lastRole: item.lastRole,
+      lastMessagePreview: item.lastMessagePreview,
+      title: item.title,
+    };
+  };
 
   return {
     async listMessages(sessionId, limit) {
@@ -198,6 +206,10 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
         updateValues[':title'] = title;
         setExpressions.push('#title = if_not_exists(#title, :title)');
       }
+
+      updateNames['#summaryCreatedAt'] = SUMMARY_CREATED_AT_ATTR;
+      updateValues[':summaryCreatedAt'] = lastMessageAt;
+      setExpressions.push('#summaryCreatedAt = if_not_exists(#summaryCreatedAt, :summaryCreatedAt)');
 
       if (gsiPartitionKey) {
         if (gsiPartitionKey !== 'userId') {
