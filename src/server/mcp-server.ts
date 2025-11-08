@@ -44,10 +44,26 @@ interface AuthenticatedUser {
   email?: string;
 }
 
-function applyCors(res: ServerResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+function applyCors(req: IncomingMessage | undefined, res: ServerResponse) {
+  const requestOrigin = req?.headers?.origin;
+  if (requestOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+    res.setHeader('Vary', 'Origin');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+
+  const requestHeaders = typeof req?.headers?.['access-control-request-headers'] === 'string'
+    ? req.headers['access-control-request-headers']
+    : null;
+  if (requestHeaders) {
+    res.setHeader('Access-Control-Allow-Headers', requestHeaders);
+  } else {
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown) {
@@ -313,7 +329,7 @@ export function createMcpServer(options: ServerOptions) {
   const chatHandler = createChatHandler(bedrock, authenticate, chatHistoryStore);
 
   const httpServer = createServer(async (req, res) => {
-    applyCors(res);
+    applyCors(req, res);
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);

@@ -182,6 +182,8 @@ export function ChatPage() {
   });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const deleteConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -210,6 +212,23 @@ export function ChatPage() {
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [userMenuOpen]);
 
+  useEffect(() => {
+    if (!pendingDeleteId) {
+      return;
+    }
+
+    deleteConfirmButtonRef.current?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setPendingDeleteId(null);
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [pendingDeleteId]);
+
   const alerts = useMemo(() => {
     const list: string[] = [];
     if (historyError) {
@@ -234,12 +253,23 @@ export function ChatPage() {
   };
 
   const handleConversationDelete = (targetSessionId: string) => {
-    const confirmed = window.confirm('Delete this conversation? This action cannot be undone.');
-    if (!confirmed) {
+    setPendingDeleteId(targetSessionId);
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDeleteId) {
       return;
     }
-    void deleteConversation(targetSessionId);
+    void deleteConversation(pendingDeleteId).finally(() => {
+      setPendingDeleteId(null);
+    });
   };
+
+  const pendingDeleteConversation = pendingDeleteId
+    ? conversations.find((item) => item.sessionId === pendingDeleteId)
+    : null;
+  const deleteModalTitleId = 'delete-conversation-title';
+  const deleteModalBodyId = 'delete-conversation-body';
 
   const handleNewConversation = () => {
     startNewConversation();
@@ -486,6 +516,42 @@ export function ChatPage() {
             </div>
           </form>
         </div>
+
+        {pendingDeleteConversation ? (
+          <div className="modern-modal">
+            <div className="modern-modal__backdrop" onClick={() => setPendingDeleteId(null)} />
+            <div
+              className="modern-modal__content"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={deleteModalTitleId}
+              aria-describedby={deleteModalBodyId}
+              tabIndex={-1}
+            >
+              <h2 id={deleteModalTitleId} className="modern-modal__title">
+                Delete this conversation?
+              </h2>
+              <p id={deleteModalBodyId} className="modern-modal__body">
+                {pendingDeleteConversation.title?.trim() || 'Untitled conversation'} and all messages will be permanently
+                removed.
+              </p>
+              <div className="modern-modal__actions">
+                <button type="button" className="modern-modal__cancel" onClick={() => setPendingDeleteId(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="modern-modal__confirm"
+                  onClick={confirmDelete}
+                  disabled={pending}
+                  ref={deleteConfirmButtonRef}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );
