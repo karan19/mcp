@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useChatSession } from '../hooks/useChat';
+import type { ConversationSearchMatch } from '../types/chat';
 
 type IconProps = {
   className?: string;
@@ -148,6 +149,15 @@ function TrashIcon({ className }: IconProps) {
   );
 }
 
+function CloseIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable="false">
+      <path d="M5 5l10 10" />
+      <path d="M15 5L5 15" />
+    </svg>
+  );
+}
+
 export function ChatPage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -165,6 +175,7 @@ export function ChatPage() {
     selectConversation,
     refreshConversations,
     deleteConversation,
+    searchConversations,
   } = useChatSession();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -184,6 +195,12 @@ export function ChatPage() {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const deleteConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ConversationSearchMatch[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -229,6 +246,21 @@ export function ChatPage() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [pendingDeleteId]);
 
+  useEffect(() => {
+    if (!searchOpen) {
+      return;
+    }
+    searchInputRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSearchOverlay();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [searchOpen]);
+
   const alerts = useMemo(() => {
     const list: string[] = [];
     if (historyError) {
@@ -270,6 +302,7 @@ export function ChatPage() {
     : null;
   const deleteModalTitleId = 'delete-conversation-title';
   const deleteModalBodyId = 'delete-conversation-body';
+  const searchTitleId = 'conversation-search-title';
 
   const handleNewConversation = () => {
     startNewConversation();
@@ -283,6 +316,51 @@ export function ChatPage() {
     refreshConversations().catch(() => {
       /* handled in state */
     });
+  };
+
+  const openSearchOverlay = () => {
+    setSearchOpen(true);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchError(null);
+  };
+
+  const closeSearchOverlay = () => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchError(null);
+    setSearchLoading(false);
+  };
+
+  const runSearch = async () => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      setSearchError(null);
+      return;
+    }
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      const results = await searchConversations(trimmed, 40);
+      setSearchResults(results);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to search conversations.';
+      setSearchError(message);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runSearch();
+  };
+
+  const handleSearchResultSelect = (targetSessionId: string) => {
+    closeSearchOverlay();
+    handleConversationSelect(targetSessionId);
   };
 
   const handleThemeToggle = () => {
@@ -311,7 +389,7 @@ export function ChatPage() {
 
   const navItems: Array<{ key: string; label: string; icon: (props: IconProps) => ReactElement; onClick?: () => void }> = [
     { key: 'new', label: 'New chat', icon: PenSquareIcon, onClick: handleNewConversation },
-    { key: 'search', label: 'Search chats', icon: SearchIcon, onClick: handleRefreshConversations },
+    { key: 'search', label: 'Search chats', icon: SearchIcon, onClick: openSearchOverlay },
   ];
 
   return (
@@ -552,6 +630,61 @@ export function ChatPage() {
             </div>
           </div>
         ) : null}
+        {searchOpen ? (
+          <div className="modern-search">
+            <div className="modern-search__backdrop" onClick={closeSearchOverlay} />
+            <div className="modern-search__panel" role="dialog" aria-modal="true" aria-labelledby={searchTitleId}>
+              <div className="modern-search__header">
+                <h2 id={searchTitleId} className="modern-search__title">
+                  Search chats
+                </h2>
+                <button type="button" className="modern-icon-button modern-search__close" onClick={closeSearchOverlay} aria-label="Close search panel">
+                  <CloseIcon className="modern-icon" />
+                </button>
+              </div>
+              <form className="modern-search__form" onSubmit={handleSearchSubmit}>
+                <SearchIcon className="modern-icon modern-search__icon" />
+                <input
+                  type="text"
+                  ref={searchInputRef}
+                  className="modern-search__input"
+                  placeholder="Search by content or title"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  aria-label="Search chats"
+                />
+                <button type="submit" className="modern-search__submit" disabled={searchLoading}>
+                  {searchLoading ? 'Searching…' : 'Search'}
+                </button>
+              </form>
+              {searchError ? <p className="modern-search__error">{searchError}</p> : null}
+              {!searchError && !searchLoading && searchQuery.trim() && searchResults.length === 0 ? (
+                <p className="modern-search__hint">No matching messages found.</p>
+              ) : null}
+              {!searchError && searchLoading ? <p className="modern-search__status">Looking for matches…</p> : null}
+              {searchResults.length > 0 ? (
+                <div className="modern-search__results" role="list">
+                  {searchResults.map((result) => (
+                    <button
+                      key={result.messageId}
+                      type="button"
+                      className="modern-search__result"
+                      onClick={() => handleSearchResultSelect(result.sessionId)}
+                    >
+                      <div className="modern-search__result-row">
+                        <span className="modern-search__result-title">{result.title?.trim() || 'Untitled conversation'}</span>
+                        <span className="modern-search__result-meta">{formatTimestamp(result.createdAt)}</span>
+                      </div>
+                      <div className="modern-search__result-snippet">
+                        <HighlightedSnippet snippet={result.snippet || result.content} query={searchQuery} />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );
@@ -566,4 +699,63 @@ function formatTimestamp(value: string | undefined) {
     return '';
   }
   return parsed.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function HighlightedSnippet({ snippet, query }: { snippet: string; query: string }) {
+  if (!snippet) {
+    return null;
+  }
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) {
+    return <span>{snippet}</span>;
+  }
+
+  const regex = new RegExp(escapeRegExp(trimmedQuery), 'gi');
+  const segments: Array<{ text: string; highlight: boolean }> = [];
+  let lastIndex = 0;
+
+  for (const match of snippet.matchAll(regex)) {
+    const startIndex = match.index ?? 0;
+    if (startIndex > lastIndex) {
+      segments.push({
+        text: snippet.slice(lastIndex, startIndex),
+        highlight: false,
+      });
+    }
+    const matchText = match[0];
+    segments.push({
+      text: matchText,
+      highlight: true,
+    });
+    lastIndex = startIndex + matchText.length;
+  }
+
+  if (lastIndex < snippet.length) {
+    segments.push({
+      text: snippet.slice(lastIndex),
+      highlight: false,
+    });
+  }
+
+  if (!segments.length) {
+    return <span>{snippet}</span>;
+  }
+
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.highlight ? (
+          <mark key={`${segment.text}-${index}`} className="modern-search__highlight">
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={`${segment.text}-${index}`}>{segment.text}</span>
+        )
+      )}
+    </>
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

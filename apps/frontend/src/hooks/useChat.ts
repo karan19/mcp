@@ -6,8 +6,15 @@ import {
   deleteConversationRequest,
   fetchConversationMessages,
   fetchConversations,
+  searchConversationMessages,
 } from '../api/chat';
-import type { ChatMessage, ConversationSummary, PersistedChatMessage, ToolCall } from '../types/chat';
+import type {
+  ChatMessage,
+  ConversationSearchMatch,
+  ConversationSummary,
+  PersistedChatMessage,
+  ToolCall,
+} from '../types/chat';
 
 interface SendMessageArgs {
   content: string;
@@ -184,6 +191,19 @@ export function useChatSession() {
     [getIdToken, sessionId]
   );
 
+  const searchConversations = useCallback(
+    async (query: string, limit = 20): Promise<ConversationSearchMatch[]> => {
+      try {
+        return await searchConversationMessages(query, getIdToken, limit);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to search conversations.';
+        setError(message);
+        throw err;
+      }
+    },
+    [getIdToken]
+  );
+
   const status = useMemo(
     () => ({
       messages,
@@ -205,6 +225,7 @@ export function useChatSession() {
     deleteConversation,
     refreshConversations,
     selectConversation,
+    searchConversations,
   };
 }
 

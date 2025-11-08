@@ -34,3 +34,13 @@ export interface PersistedChatMessage {
   userId: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface ConversationSearchMatch {
+  sessionId: string;
+  messageId: string;
+  content: string;
+  snippet: string;
+  createdAt: string;
+  role: ChatRole;
+  title?: string;
+}

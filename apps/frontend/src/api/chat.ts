@@ -1,5 +1,5 @@
 import { appConfig } from '../config/env';
-import type { ConversationSummary, PersistedChatMessage } from '../types/chat';
+import type { ConversationSearchMatch, ConversationSummary, PersistedChatMessage } from '../types/chat';
 
 interface ConversationListResponse {
   conversations?: ConversationSummary[];
@@ -9,6 +9,10 @@ interface ConversationMessagesResponse {
   sessionId: string;
   messages: PersistedChatMessage[];
   summary?: ConversationSummary | null;
+}
+
+interface ConversationSearchResponse {
+  matches?: ConversationSearchMatch[];
 }
 
 export async function buildAuthHeaders(getIdToken: () => Promise<string | null>) {
@@ -89,4 +93,28 @@ export async function deleteConversationRequest(
   if (!response.ok && response.status !== 204) {
     throw new Error(`Failed to delete conversation (${response.status})`);
   }
+}
+
+export async function searchConversationMessages(
+  query: string,
+  getIdToken: () => Promise<string | null>,
+  limit = 20
+) {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const headers = await buildAuthHeaders(getIdToken);
+  const params = new URLSearchParams({ query: trimmed, limit: String(limit) });
+  const response = await fetch(`${appConfig.apiBaseUrl}/conversations/search?${params.toString()}`, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to search conversations (${response.status})`);
+  }
+
+  const payload = (await response.json()) as ConversationSearchResponse;
+  return payload.matches ?? [];
 }

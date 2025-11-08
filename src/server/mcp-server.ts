@@ -350,6 +350,48 @@ export function createMcpServer(options: ServerOptions) {
       return;
     }
 
+    if (req.method === 'GET' && path === '/conversations/search') {
+      const requester = await authenticate(req, res);
+      if (!requester) {
+        return;
+      }
+
+      const queryParam = requestUrl.searchParams.get('query') ?? requestUrl.searchParams.get('q') ?? '';
+      const trimmedQuery = queryParam.trim();
+      if (!trimmedQuery) {
+        sendErrorJson(res, 400, 'query is required');
+        return;
+      }
+
+      const limitParam = requestUrl.searchParams.get('limit');
+      const limit = limitParam ? clampSearchLimit(limitParam) : 20;
+
+      try {
+        const [matches, summaries] = await Promise.all([
+          chatHistoryStore.searchMessagesForUser(requester.sub, trimmedQuery, limit),
+          chatHistoryStore.listSummariesForUser(requester.sub),
+        ]);
+        const summaryMap = new Map(summaries.map((summary) => [summary.sessionId, summary]));
+        const payload = matches.map((match) => {
+          const summary = summaryMap.get(match.sessionId);
+          return {
+            sessionId: match.sessionId,
+            messageId: match.messageId,
+            content: match.content,
+            snippet: buildSearchSnippet(match.content, trimmedQuery),
+            createdAt: match.createdAt,
+            role: match.role,
+            title: summary?.title ?? summary?.lastMessagePreview ?? 'Untitled conversation',
+          };
+        });
+        sendJson(res, 200, { matches: payload });
+      } catch (error) {
+        logger.error({ err: error, user: requester.sub }, 'Failed to search conversations');
+        sendErrorJson(res, 500, 'Failed to search conversations');
+      }
+      return;
+    }
+
     if (req.method === 'GET' && path === '/conversations') {
       const requester = await authenticate(req, res);
       if (!requester) {
@@ -563,4 +605,32 @@ function clampLimit(raw: string): number | undefined {
   }
 
   return Math.min(Math.floor(parsed), 500);
+}
+
+function clampSearchLimit(raw: string): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 20;
+  }
+  return Math.min(Math.max(1, Math.floor(parsed)), 100);
+}
+
+function buildSearchSnippet(content: string, query: string, radius = 60): string {
+  const normalizedContent = content.toLowerCase();
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return buildMessagePreview(content, radius * 2);
+  }
+
+  const matchIndex = normalizedContent.indexOf(normalizedQuery);
+  if (matchIndex === -1) {
+    return buildMessagePreview(content, radius * 2);
+  }
+
+  const start = Math.max(0, matchIndex - radius);
+  const end = Math.min(content.length, matchIndex + normalizedQuery.length + radius);
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < content.length ? '…' : '';
+
+  return `${prefix}${content.slice(start, end)}${suffix}`;
 }
