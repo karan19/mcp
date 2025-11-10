@@ -70,7 +70,6 @@ const CONFIG = {
   containerImagePath: optionalEnv('MCP_CONTAINER_IMAGE_PATH') ?? path.resolve(__dirname, '..', '..'),
   cpu: optionalNumberEnv('MCP_CPU', 1024),
   memoryLimitMiB: optionalNumberEnv('MCP_MEMORY_LIMIT_MIB', 2048),
-  desiredCount: optionalNumberEnv('MCP_DESIRED_COUNT', 1),
   servicePort: optionalNumberEnv('MCP_SERVICE_PORT', 8080),
   logLevel: optionalEnv('MCP_LOG_LEVEL') ?? 'info',
   cognitoRegion: optionalEnv('MCP_COGNITO_REGION') ?? defaultRegion,
@@ -80,10 +79,6 @@ const CONFIG = {
   bedrockModelId: optionalEnv('MCP_BEDROCK_MODEL_ID') ?? 'meta.llama3-8b-instruct-v1:0',
   bedrockMaxOutputTokens: optionalNumberEnv('MCP_BEDROCK_MAX_OUTPUT_TOKENS', 512),
   bedrockTemperature: optionalFloatEnv('MCP_BEDROCK_TEMPERATURE', 0.2),
-  certificateArn: optionalEnv('MCP_CERTIFICATE_ARN'),
-  redirectHttpToHttps: optionalBooleanEnv('MCP_REDIRECT_HTTP_TO_HTTPS', true),
-  apiDomainName: optionalEnv('MCP_API_DOMAIN_NAME'),
-  hostedZoneDomainName: optionalEnv('MCP_HOSTED_ZONE_DOMAIN_NAME'),
   dynamoTableArns: (optionalEnv('MCP_DYNAMODB_TABLE_ARNS') ?? '')
     .split(',')
     .map((value) => value.trim())
@@ -103,7 +98,6 @@ new McpStack(app, CONFIG.stackName, {
   },
   serpApiSecretName: CONFIG.serpApiSecretName,
   containerImagePath: CONFIG.containerImagePath,
-  desiredCount: CONFIG.desiredCount,
   cpu: CONFIG.cpu,
   memoryLimitMiB: CONFIG.memoryLimitMiB,
   servicePort: CONFIG.servicePort,
@@ -115,10 +109,6 @@ new McpStack(app, CONFIG.stackName, {
   bedrockModelId: CONFIG.bedrockModelId,
   bedrockMaxOutputTokens: CONFIG.bedrockMaxOutputTokens,
   bedrockTemperature: CONFIG.bedrockTemperature,
-  certificateArn: CONFIG.certificateArn,
-  redirectHttpToHttps: CONFIG.redirectHttpToHttps,
-  apiDomainName: CONFIG.apiDomainName,
-  hostedZoneDomainName: CONFIG.hostedZoneDomainName,
   dynamoTableArns: CONFIG.dynamoTableArns,
   dynamoTableConfig: CONFIG.dynamoTableConfig,
   kmsKeyArn: CONFIG.kmsKeyArn,

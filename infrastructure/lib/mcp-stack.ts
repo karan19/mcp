@@ -2,19 +2,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Duration, Stack, StackProps, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
 import {
-  aws_ec2 as ec2,
-  aws_ecs as ecs,
-  aws_elasticloadbalancingv2 as elbv2,
-  aws_logs as logs,
-  aws_secretsmanager as secretsmanager,
-  aws_iam as iam,
+  aws_apprunner as apprunner,
   aws_dynamodb as dynamodb,
+  aws_iam as iam,
+  aws_secretsmanager as secretsmanager,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
-import { DnsValidatedCertificate } from 'aws-cdk-lib/aws-certificatemanager';
-import { HostedZone, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
-import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import { DockerImageAsset, Platform } from 'aws-cdk-lib/aws-ecr-assets';
 
 export interface McpStackProps extends StackProps {
   /**
@@ -28,28 +22,21 @@ export interface McpStackProps extends StackProps {
   readonly serpApiSecretName: string;
 
   /**
-   * Desired number of Fargate tasks.
+   * CPU units allocated to the container (e.g. 512, 1024, 2048).
    *
-   * @default 1
-   */
-  readonly desiredCount?: number;
-
-  /**
-   * CPU units allocated to each task (e.g. 512, 1024).
-   *
-   * @default 512
+   * @default 1024
    */
   readonly cpu?: number;
 
   /**
-   * Memory (in MiB) allocated to each task.
+   * Memory (in MiB) allocated to the container.
    *
-   * @default 1024
+   * @default 2048
    */
   readonly memoryLimitMiB?: number;
 
   /**
-   * Container/listener port to expose via the load balancer.
+   * Container port that App Runner should expose.
    *
    * @default 8080
    */
@@ -61,18 +48,6 @@ export interface McpStackProps extends StackProps {
    * @default 'info'
    */
   readonly logLevel?: string;
-
-  /**
-   * Optional ACM certificate ARN to enable HTTPS on the load balancer.
-   */
-  readonly certificateArn?: string;
-
-  /**
-   * Whether to redirect HTTP to HTTPS when a certificate is provided.
-   *
-   * @default true (when certificateArn is set)
-   */
-  readonly redirectHttpToHttps?: boolean;
 
   /**
    * Cognito region for verifying ID tokens.
@@ -90,7 +65,7 @@ export interface McpStackProps extends StackProps {
   readonly cognitoUserPoolClientId: string;
 
   /**
-   * Bedrock region hosting the Anthropic model.
+   * Bedrock region hosting the model.
    */
   readonly bedrockRegion: string;
 
@@ -110,16 +85,6 @@ export interface McpStackProps extends StackProps {
   readonly bedrockTemperature?: number;
 
   /**
-   * Optional domain name to associate with the MCP API (e.g. api.example.com).
-   */
-  readonly apiDomainName?: string;
-
-  /**
-   * Hosted zone domain name that contains apiDomainName.
-   */
-  readonly hostedZoneDomainName?: string;
-
-  /**
    * DynamoDB table ARNs that the task should be allowed to read from.
    */
   readonly dynamoTableArns?: string[];
@@ -130,7 +95,7 @@ export interface McpStackProps extends StackProps {
   readonly dynamoTableConfig?: string;
 
   /**
-   * Optional KMS key ARN used by the DynamoDB tables; grants decrypt permissions to the task role when provided.
+   * Optional KMS key ARN used by the DynamoDB tables; grants decrypt permissions when provided.
    */
   readonly kmsKeyArn?: string;
 
@@ -151,20 +116,9 @@ export class McpStack extends Stack {
   constructor(scope: Construct, id: string, props: McpStackProps) {
     super(scope, id, props);
 
-    const cpu = props.cpu ?? 512;
-    const memoryLimitMiB = props.memoryLimitMiB ?? 1024;
-    const desiredCount = props.desiredCount ?? 1;
+    const cpu = props.cpu ?? 1024;
+    const memoryLimitMiB = props.memoryLimitMiB ?? 2048;
     const servicePort = props.servicePort ?? 8080;
-
-    const vpc = new ec2.Vpc(this, 'Vpc', {
-      maxAzs: 2,
-      natGateways: 1,
-    });
-
-    const cluster = new ecs.Cluster(this, 'Cluster', {
-      vpc,
-      containerInsights: true,
-    });
 
     const tableConfigEntries: string[] = [];
     if (props.dynamoTableConfig && props.dynamoTableConfig.trim()) {
@@ -202,26 +156,32 @@ export class McpStack extends Stack {
 
     const combinedTableConfig = tableConfigEntries.join(';');
 
-    const taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDefinition', {
-      cpu,
-      memoryLimitMiB,
-    });
-
     const serpApiSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
       'SerpApiSecret',
       props.serpApiSecretName,
     );
 
-    const logGroup = new logs.LogGroup(this, 'LogGroup', {
-      logGroupName: `/mcp/service/${this.stackName}`,
-      retention: logs.RetentionDays.ONE_MONTH,
-    });
-
     const containerImageDirectory = path.resolve(props.containerImagePath);
     if (!fs.existsSync(containerImageDirectory)) {
       throw new Error(`Container image directory does not exist: ${containerImageDirectory}`);
     }
+
+    const imageAsset = new DockerImageAsset(this, 'McpImage', {
+      directory: containerImageDirectory,
+      platform: Platform.LINUX_AMD64,
+    });
+
+    const imageAccessRole = new iam.Role(this, 'AppRunnerEcrAccessRole', {
+      assumedBy: new iam.ServicePrincipal('build.apprunner.amazonaws.com'),
+      description: 'Role that allows App Runner to pull the MCP image from ECR.',
+    });
+    imageAsset.repository.grantPull(imageAccessRole);
+
+    const serviceRole = new iam.Role(this, 'AppRunnerServiceRole', {
+      assumedBy: new iam.ServicePrincipal('tasks.apprunner.amazonaws.com'),
+      description: 'Execution role for the MCP App Runner service.',
+    });
 
     const containerEnv: Record<string, string> = {
       LOG_LEVEL: props.logLevel ?? 'info',
@@ -251,35 +211,30 @@ export class McpStack extends Stack {
       containerEnv.MCP_CHAT_TABLE_NAME = chatTable.tableName;
     }
 
-    const container = taskDefinition.addContainer('McpContainer', {
-      image: ecs.ContainerImage.fromAsset(containerImageDirectory, {
-        platform: Platform.LINUX_AMD64,
-      }),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: 'mcp',
-        logGroup,
-      }),
-      environment: containerEnv,
-      secrets: {
-        SERPAPI_KEY: ecs.Secret.fromSecretsManager(serpApiSecret),
-      },
-      portMappings: [
-        {
-          containerPort: servicePort,
-        },
-      ],
-    });
+    const runtimeEnvironmentVariables: apprunner.CfnService.KeyValuePairProperty[] = Object.entries(
+      containerEnv,
+    ).map(([name, value]) => ({
+      name,
+      value,
+    }));
 
-    taskDefinition.taskRole.addToPrincipalPolicy(
+    const runtimeEnvironmentSecrets: apprunner.CfnService.KeyValuePairProperty[] = [
+      {
+        name: 'SERPAPI_KEY',
+        value: serpApiSecret.secretArn,
+      },
+    ];
+
+    serpApiSecret.grantRead(serviceRole);
+
+    serviceRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
-        resources: [
-          `arn:aws:bedrock:${props.bedrockRegion}::foundation-model/${props.bedrockModelId}`,
-        ],
+        resources: [`arn:aws:bedrock:${props.bedrockRegion}::foundation-model/${props.bedrockModelId}`],
       }),
     );
 
-    taskDefinition.taskRole.addToPrincipalPolicy(
+    serviceRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: [
           'aws-marketplace:ViewSubscriptions',
@@ -293,12 +248,12 @@ export class McpStack extends Stack {
     );
 
     if (chatTable) {
-      chatTable.grantReadWriteData(taskDefinition.taskRole);
+      chatTable.grantReadWriteData(serviceRole);
     }
 
     if (externalDynamoTableArns.length > 0) {
       const dynamoResources = externalDynamoTableArns.flatMap((arn) => [arn, `${arn}/index/*`]);
-      taskDefinition.taskRole.addToPrincipalPolicy(
+      serviceRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
           actions: [
             'dynamodb:GetItem',
@@ -313,7 +268,7 @@ export class McpStack extends Stack {
     }
 
     if (props.kmsKeyArn) {
-      taskDefinition.taskRole.addToPrincipalPolicy(
+      serviceRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
           actions: ['kms:Decrypt', 'kms:DescribeKey'],
           resources: [props.kmsKeyArn],
@@ -321,144 +276,49 @@ export class McpStack extends Stack {
       );
     }
 
-    const serviceSecurityGroup = new ec2.SecurityGroup(this, 'ServiceSecurityGroup', {
-      vpc,
-      allowAllOutbound: true,
-      description: 'Security group for MCP Fargate service',
+    const cpuSetting = mapCpuToAppRunner(cpu);
+    const memorySetting = mapMemoryToAppRunner(memoryLimitMiB);
+
+    const service = new apprunner.CfnService(this, 'AppRunnerService', {
+      serviceName: Stack.of(this).stackName,
+      sourceConfiguration: {
+        autoDeploymentsEnabled: true,
+        authenticationConfiguration: {
+          accessRoleArn: imageAccessRole.roleArn,
+        },
+        imageRepository: {
+          imageIdentifier: imageAsset.imageUri,
+          imageRepositoryType: 'ECR',
+          imageConfiguration: {
+            port: String(servicePort),
+            runtimeEnvironmentVariables,
+            runtimeEnvironmentSecrets,
+          },
+        },
+      },
+      instanceConfiguration: {
+        cpu: cpuSetting,
+        memory: memorySetting,
+        instanceRoleArn: serviceRole.roleArn,
+      },
+      healthCheckConfiguration: {
+        protocol: 'HTTP',
+        path: '/health',
+        interval: Duration.seconds(10).toSeconds(),
+        timeout: Duration.seconds(5).toSeconds(),
+        healthyThreshold: 1,
+        unhealthyThreshold: 3,
+      },
     });
 
-    const service = new ecs.FargateService(this, 'Service', {
-      cluster,
-      taskDefinition,
-      desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      assignPublicIp: false,
+    new CfnOutput(this, 'ServiceHttpsUrl', {
+      value: service.attrServiceUrl,
+      description: 'HTTPS endpoint for the MCP App Runner service.',
     });
 
-    const loadBalancer = new elbv2.ApplicationLoadBalancer(this, 'LoadBalancer', {
-      vpc,
-      internetFacing: true,
-    });
-
-    let certificateArn = props.certificateArn;
-
-    if (!certificateArn && props.apiDomainName && props.hostedZoneDomainName) {
-      const zone = HostedZone.fromLookup(this, 'HostedZone', {
-        domainName: props.hostedZoneDomainName,
-      });
-
-      const certificate = new DnsValidatedCertificate(this, 'ApiCertificate', {
-        domainName: props.apiDomainName,
-        hostedZone: zone,
-        region: props.bedrockRegion,
-      });
-
-      certificateArn = certificate.certificateArn;
-
-      new ARecord(this, 'ApiAliasRecord', {
-        zone,
-        recordName: props.apiDomainName,
-        target: RecordTarget.fromAlias(new targets.LoadBalancerTarget(loadBalancer)),
-      });
-    }
-
-    const httpListener = loadBalancer.addListener('HttpListener', {
-      port: 80,
-      open: true,
-    });
-
-    const loadBalancerTarget = service.loadBalancerTarget({
-      containerName: container.containerName,
-      containerPort: servicePort,
-    });
-
-    const healthCheck = {
-      path: '/health',
-      interval: Duration.seconds(30),
-      healthyHttpCodes: '200-499',
-    };
-
-    const httpsEnabled = Boolean(certificateArn);
-    const redirectHttp = props.redirectHttpToHttps ?? httpsEnabled;
-
-    if (httpsEnabled) {
-      const certificate = elbv2.ListenerCertificate.fromArn(certificateArn!);
-      const httpsListener = loadBalancer.addListener('HttpsListener', {
-        port: 443,
-        protocol: elbv2.ApplicationProtocol.HTTPS,
-        certificates: [certificate],
-        open: true,
-      });
-
-      httpsListener.addTargets('HttpsTargets', {
-        targetGroupName: 'McpTargetGroup',
-        port: servicePort,
-        protocol: elbv2.ApplicationProtocol.HTTP,
-        targets: [loadBalancerTarget],
-        healthCheck,
-      });
-
-      if (redirectHttp) {
-        httpListener.addAction('RedirectToHttps', {
-          action: elbv2.ListenerAction.redirect({
-            protocol: 'HTTPS',
-            port: '443',
-            permanent: true,
-          }),
-        });
-      } else {
-        httpListener.addTargets('HttpTargets', {
-          targetGroupName: 'McpHttpTargets',
-          port: servicePort,
-          protocol: elbv2.ApplicationProtocol.HTTP,
-          targets: [loadBalancerTarget],
-          healthCheck,
-        });
-      }
-    } else {
-      httpListener.addTargets('HttpTargets', {
-        targetGroupName: 'McpTargetGroup',
-        port: servicePort,
-        protocol: elbv2.ApplicationProtocol.HTTP,
-        targets: [loadBalancerTarget],
-        healthCheck,
-      });
-    }
-
-    service.connections.allowFrom(loadBalancer, ec2.Port.tcp(servicePort));
-
-    new CfnOutput(this, 'LoadBalancerDnsName', {
-      value: loadBalancer.loadBalancerDnsName,
-      description: 'Public DNS name for the MCP load balancer.',
-    });
-
-    if (httpsEnabled) {
-      new CfnOutput(this, 'ServiceHttpsUrl', {
-        value: `https://${props.apiDomainName ?? loadBalancer.loadBalancerDnsName}`,
-        description: 'HTTPS endpoint for the MCP server.',
-      });
-    }
-
-    if (props.apiDomainName) {
-      new CfnOutput(this, 'ServiceCustomDomain', {
-        value: props.apiDomainName,
-        description: 'Custom domain associated with the MCP API load balancer.',
-      });
-    }
-
-    new CfnOutput(this, 'ServiceUrl', {
-      value: `ws://${loadBalancer.loadBalancerDnsName}`,
-      description: 'WebSocket endpoint for the MCP server.',
-    });
-
-    new CfnOutput(this, 'ServiceSecurityGroupId', {
-      value: serviceSecurityGroup.securityGroupId,
-      description: 'Security group ID attached to the MCP service.',
-    });
-
-    new CfnOutput(this, 'ClusterName', {
-      value: cluster.clusterName,
-      description: 'ECS cluster running the MCP server.',
+    new CfnOutput(this, 'ServiceArn', {
+      value: service.attrServiceArn,
+      description: 'ARN of the App Runner service.',
     });
 
     if (chatTable) {
@@ -473,9 +333,38 @@ export class McpStack extends Stack {
       });
     }
 
-    new CfnOutput(this, 'TaskDefinitionArn', {
-      value: taskDefinition.taskDefinitionArn,
-      description: 'ARN of the task definition used by the MCP service.',
+    new CfnOutput(this, 'ContainerImageUri', {
+      value: imageAsset.imageUri,
+      description: 'URI of the container image deployed to App Runner.',
     });
   }
+}
+
+function mapCpuToAppRunner(cpu: number): string {
+  if (cpu <= 1024) {
+    return '1 vCPU';
+  }
+  if (cpu <= 2048) {
+    return '2 vCPU';
+  }
+  if (cpu <= 4096) {
+    return '4 vCPU';
+  }
+  return '8 vCPU';
+}
+
+function mapMemoryToAppRunner(memoryMiB: number): string {
+  if (memoryMiB <= 2048) {
+    return '2 GB';
+  }
+  if (memoryMiB <= 4096) {
+    return '4 GB';
+  }
+  if (memoryMiB <= 8192) {
+    return '8 GB';
+  }
+  if (memoryMiB <= 16384) {
+    return '16 GB';
+  }
+  return '32 GB';
 }

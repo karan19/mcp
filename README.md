@@ -89,7 +89,7 @@ docker build -t mcp-server .
    - `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated table descriptors `table|partitionKey|sortKey|gsiName|gsiPartitionKey|gsiSortKey`)
    - `MCP_CREATE_CHAT_TABLE` (defaults to `true`; set to `false` to skip provisioning the managed chat table)
    - `MCP_CHAT_TABLE_NAME` (optional explicit name when provisioning the managed chat table)
-   - Optional custom domain settings (`MCP_API_DOMAIN_NAME`, `MCP_HOSTED_ZONE_DOMAIN_NAME`, `MCP_CERTIFICATE_ARN`)
+   - Optional: configure a custom domain directly in the App Runner console after deployment (not automated by this stack yet).
 
 2. **Bootstrap (first time per account/region)**
   ```bash
@@ -114,9 +114,17 @@ docker build -t mcp-server .
    npm run deploy     # deploys the McpStack stack
    ```
 
-   The deploy step builds a Docker image locally. If Docker isn’t running you’ll see `Cannot connect to the Docker daemon ...`. After a successful deploy, note the load balancer DNS name; the WebSocket endpoint is `ws://<ALB-DNS>:8080` unless you changed the port.
+   The deploy step builds a Docker image locally and provisions an App Runner service. If Docker isn’t running you’ll see `Cannot connect to the Docker daemon ...`. After a successful deploy, note the `ServiceHttpsUrl` output; use it for REST calls and replace the `https://` prefix with `wss://` when configuring WebSocket clients.
 
-5. **Teardown (optional)**
+5. **Pause/resume to control cost (optional)**
+   ```bash
+   SERVICE_ARN=<AppRunnerServiceArn from outputs>
+   aws apprunner pause-service --service-arn "$SERVICE_ARN"
+   aws apprunner resume-service --service-arn "$SERVICE_ARN"
+   ```
+   App Runner bills only while the service is running. Pausing is the easiest way to keep the monthly cost under a dollar when you only need the tooling a few hours per month.
+
+6. **Teardown (optional)**
    ```bash
    cd mcp/infrastructure
    npm run destroy
