@@ -1,7 +1,7 @@
 import type { Logger } from 'pino';
 import type { BedrockConfig } from '../config/env';
 import type { McpToolDefinition, ToolRegistryEntry } from '../tools';
-import { invokeModel, type ChatMessage } from './bedrock';
+import { invokeModel, invokeModelStream, supportsStreamingModel, type ChatMessage } from './bedrock';
 import { buildToolCatalog, formatToolCatalog } from './toolCatalog';
 import { buildAnswerPrompt, buildDecisionPrompt, summarizeToolOutput } from './toolPrompts';
 
@@ -35,6 +35,22 @@ export interface RunChatTurnOptions {
 export interface RunChatTurnResult {
   reply: string | { tools: Array<{ name: string; description: string }> };
   toolCalls: ToolCallRecord[];
+}
+
+export interface StreamingOptions {
+  enabled?: boolean;
+  onDelta?: (text: string) => void;
+  abortSignal?: AbortSignal;
+}
+
+export interface RunChatTurnEvents {
+  onDecision?: (decision: FirstPassDecision) => void;
+  onToolInvocationStart?: (toolName: string, args: Record<string, unknown> | undefined) => void;
+  onToolInvocationComplete?: (toolName: string, output: string[]) => void;
+}
+
+export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatTurnResult> {
+  return runChatTurnWithEvents(options);
 }
 
 function extractJsonObjects(raw: string): string[] {
@@ -96,7 +112,11 @@ function parseModelJsonResponse(raw: string): FirstPassDecision {
   return parsed;
 }
 
-export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatTurnResult> {
+export async function runChatTurnWithEvents(
+  options: RunChatTurnOptions,
+  events?: RunChatTurnEvents,
+  streaming?: StreamingOptions
+): Promise<RunChatTurnResult> {
   const { userMessage, history = [], bedrock, toolDefinitions, toolRegistry, logger } = options;
 
   const catalogEntries = buildToolCatalog(toolDefinitions);
@@ -168,8 +188,12 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     }
   }
   logger.info({ decision }, 'Planner parsed decision');
+  events?.onDecision?.(decision);
 
   if (decision.action === 'respond' && decision.response) {
+    if (streaming?.enabled && typeof decision.response === 'string') {
+      streaming.onDelta?.(decision.response);
+    }
     logger.info({ response: decision.response }, 'Planner responded directly without tool call');
     return {
       reply: decision.response,
@@ -190,6 +214,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
 
     let handlerResult;
     try {
+      events?.onToolInvocationStart?.(decision.tool, decision.arguments);
       handlerResult = await entry.handler(decision.arguments ?? {}, {
         logger,
         currentUserId: options.currentUserId,
@@ -203,6 +228,10 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
     }
 
     const toolSummary = summarizeToolOutput(handlerResult.content);
+    const toolOutputTexts = handlerResult.content
+      .map((item) => (typeof item.text === 'string' ? item.text : ''))
+      .filter((text) => text.length > 0);
+    events?.onToolInvocationComplete?.(decision.tool, toolOutputTexts);
     logger.info(
       {
         tool: decision.tool,
@@ -231,11 +260,38 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
       },
     ];
 
-    const answerRaw = await invokeModel(bedrock, {
-      messages: answerMessages,
-      maxOutputTokens: bedrock.maxOutputTokens,
-      temperature: bedrock.temperature,
-    });
+    let answerRaw: string;
+    const canStream = Boolean(streaming?.enabled && supportsStreamingModel(bedrock.modelId));
+    if (canStream) {
+      try {
+        answerRaw = await invokeModelStream(bedrock, {
+          messages: answerMessages,
+          maxOutputTokens: bedrock.maxOutputTokens,
+          temperature: bedrock.temperature,
+          onDelta: streaming?.onDelta,
+          abortSignal: streaming?.abortSignal,
+        });
+      } catch (error) {
+        logger.warn({ err: error, model: bedrock.modelId }, 'Streaming answer failed; falling back to standard invocation');
+        answerRaw = await invokeModel(bedrock, {
+          messages: answerMessages,
+          maxOutputTokens: bedrock.maxOutputTokens,
+          temperature: bedrock.temperature,
+        });
+        if (streaming?.enabled && typeof answerRaw === 'string') {
+          streaming.onDelta?.(answerRaw);
+        }
+      }
+    } else {
+      answerRaw = await invokeModel(bedrock, {
+        messages: answerMessages,
+        maxOutputTokens: bedrock.maxOutputTokens,
+        temperature: bedrock.temperature,
+      });
+      if (streaming?.enabled && typeof answerRaw === 'string') {
+        streaming.onDelta?.(answerRaw);
+      }
+    }
     logger.info({ tool: decision.tool, answerRaw }, 'Assistant composed response from tool output');
 
     return {
@@ -244,9 +300,7 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
         {
           toolName: decision.tool,
           arguments: decision.arguments ?? {},
-          output: handlerResult.content
-            .map((item) => (typeof item.text === 'string' ? item.text : ''))
-            .filter((text) => text.length > 0),
+          output: toolOutputTexts,
         },
       ],
     };

@@ -26,6 +26,7 @@ Optional environment overrides:
 - `MCP_HOST` / `MCP_PORT`
 - `MCP_DYNAMODB_TABLE_CONFIG` (semicolon-separated entries `table|partitionKey|sortKey|gsiName|gsiPartitionKey|gsiSortKey`)
 - `MCP_CHAT_TABLE_NAME` (optional table selector when multiple entries are supplied)
+- `TOOL_METRICS_EMIT_EMF` (set to `true` to emit CloudWatch Embedded Metric Format logs for tool calls)
 
 ## Frontend (Amplify-ready)
 
@@ -40,6 +41,9 @@ npm run build:frontend         # production build (outputs to apps/frontend/dist
 
 Deploy with AWS Amplify Hosting by connecting this repo and keeping the generated `amplify.yml`. The build pipeline runs `npm ci` at the repo root and publishes `apps/frontend/dist`. Set `VITE_API_BASE_URL`, `VITE_COGNITO_REGION`, `VITE_COGNITO_USER_POOL_ID`, and `VITE_COGNITO_USER_POOL_CLIENT_ID` in Amplify’s environment settings.
 
+Optional frontend flags:
+- `VITE_CHAT_USE_STREAMING=true` enables the SSE-based `/chat/stream` endpoint so the UI can show live status updates while the assistant thinks.
+
 ### Chat API & persistence
 
 The MCP server exposes a small REST surface alongside the `/chat` orchestrator endpoint:
@@ -47,8 +51,13 @@ The MCP server exposes a small REST surface alongside the `/chat` orchestrator e
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/chat` | `POST` | Execute the next turn in a conversation. Accepts `{ message, sessionId?, messageId? }`. Returns `{ sessionId, reply, toolCalls }`. |
+| `/chat/stream` | `POST` (SSE) | Same payload as `/chat`, but set `Accept: text/event-stream` to receive status and tool-call updates as Server-Sent Events. |
 | `/conversations` | `GET` | List conversation summaries for the authenticated user. |
 | `/conversations/:id/messages` | `GET` | Retrieve the full message history for a session (ordered by `createdAt`). |
+| `/conversations/search` | `GET` | Search prior chat messages using a DynamoDB scan scoped to the authenticated user. |
+| `/metrics` | `GET` | Prometheus text-format metrics (tool success/failure counters, retries, circuit state). |
+
+External tool calls (SerpAPI, Wikipedia, arXiv) automatically retry with exponential backoff, short-term caching, and circuit breakers to soften upstream outages.
 
 Chat history is stored in DynamoDB. Provide table metadata via `MCP_DYNAMODB_TABLE_CONFIG`, for example:
 

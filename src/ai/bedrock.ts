@@ -1,4 +1,4 @@
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
 import type { BedrockConfig } from '../config/env';
 
 export interface ChatMessage {
@@ -38,6 +38,62 @@ export async function invokeModel(config: BedrockConfig, options: InvokeOptions)
   const buffer = Buffer.from(response.body ?? new Uint8Array());
   const raw = buffer.toString('utf-8');
   return parseResponse(config.modelId, raw);
+}
+
+export interface StreamOptions extends InvokeOptions {
+  onDelta?: (text: string) => void;
+  abortSignal?: AbortSignal;
+}
+
+export async function invokeModelStream(config: BedrockConfig, options: StreamOptions): Promise<string> {
+  if (!supportsStreamingModel(config.modelId)) {
+    throw new Error(`Model ${config.modelId} does not support streaming responses.`);
+  }
+
+  const client = getClient(config);
+  const body = buildRequestPayload(config, options);
+  const command = new InvokeModelWithResponseStreamCommand({
+    modelId: config.modelId,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body: JSON.stringify(body),
+  });
+
+  const response = await client.send(command, {
+    abortSignal: options.abortSignal,
+  });
+  const decoder = new TextDecoder();
+  let fullText = '';
+
+  for await (const event of response.body ?? []) {
+    if (event.chunk) {
+      const chunkString = decoder.decode(event.chunk.bytes ?? new Uint8Array());
+      if (!chunkString) {
+        continue;
+      }
+
+      try {
+        const payload = JSON.parse(chunkString);
+        const delta = extractStreamText(config.modelId, payload);
+        if (delta && delta.length > 0) {
+          fullText += delta;
+          options.onDelta?.(delta);
+        }
+      } catch (error) {
+        console.warn('Failed to parse Bedrock stream chunk', error);
+      }
+    } else if (event.internalServerException) {
+      throw new Error(event.internalServerException.message ?? 'Bedrock stream internal error');
+    } else if (event.throttlingException) {
+      throw new Error(event.throttlingException.message ?? 'Bedrock stream throttled');
+    } else if (event.validationException) {
+      throw new Error(event.validationException.message ?? 'Bedrock stream validation error');
+    } else if (event.modelStreamErrorException) {
+      throw new Error(event.modelStreamErrorException.message ?? 'Bedrock model stream error');
+    }
+  }
+
+  return fullText.trim();
 }
 
 function splitMessages(messages: ChatMessage[]) {
@@ -187,4 +243,26 @@ function parseResponse(modelId: string, raw: string): string {
   }
 
   throw new Error('Unsupported Bedrock model response format.');
+}
+
+export function supportsStreamingModel(modelId: string): boolean {
+  return modelId.startsWith('anthropic.');
+}
+
+function extractStreamText(modelId: string, payload: any): string | null {
+  if (modelId.startsWith('anthropic.')) {
+    if (payload?.type === 'content_block_delta' && payload?.delta?.type === 'text_delta') {
+      return payload.delta.text ?? null;
+    }
+    if (payload?.type === 'message_delta' && typeof payload?.delta?.text === 'string') {
+      return payload.delta.text;
+    }
+    if (Array.isArray(payload?.delta?.content)) {
+      return payload.delta.content
+        .map((entry: any) => (typeof entry?.text === 'string' ? entry.text : ''))
+        .join('');
+    }
+  }
+
+  return null;
 }

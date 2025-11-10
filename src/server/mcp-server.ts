@@ -1,12 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import crypto from 'crypto';
-import pino from 'pino';
+import pino, { type Logger } from 'pino';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { BedrockConfig, CognitoConfig, DynamoTableConfig } from '../config/env';
-import { runChatTurn } from '../ai/orchestrator';
+import { runChatTurnWithEvents, type RunChatTurnEvents, type RunChatTurnResult } from '../ai/orchestrator';
 import { createCognitoVerifier, type VerifiedUser } from './auth';
 import { toolDefinitions, toolRegistry } from '../tools';
 import { createChatHistoryStore } from './chat-history';
+import { renderPrometheusMetrics } from '../metrics/toolMetrics';
+import { invokeModel } from '../ai/bedrock';
 
 const logger = pino({ name: 'mcp-server', level: 'info' });
 
@@ -42,6 +44,48 @@ type McpRequest = ListToolsRequest | CallToolRequest | PingRequest | McpRequestB
 interface AuthenticatedUser {
   sub: string;
   email?: string;
+}
+
+class RequestError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'RequestError';
+    this.status = status;
+  }
+}
+
+type ChatWorkflowContext = {
+  bedrock: BedrockConfig;
+  chatStore: ReturnType<typeof createChatHistoryStore>;
+  logger: Logger;
+  toolDefinitions: typeof toolDefinitions;
+  toolRegistry: typeof toolRegistry;
+};
+
+type ChatStatusStage =
+  | 'history_loading'
+  | 'history_loaded'
+  | 'user_message_stored'
+  | 'model_inference'
+  | 'assistant_reply_ready'
+  | 'assistant_message_stored';
+
+interface ChatWorkflowHooks {
+  onStatus?: (stage: ChatStatusStage, details?: Record<string, unknown>) => void;
+  runEvents?: RunChatTurnEvents;
+  streaming?: {
+    enabled: boolean;
+    onAssistantDelta?: (text: string) => void;
+    abortSignal?: AbortSignal;
+    onComplete?: () => void;
+  };
+}
+
+interface ChatIdentifiers {
+  sessionId: string;
+  messageId: string;
 }
 
 function applyCors(req: IncomingMessage | undefined, res: ServerResponse) {
@@ -185,9 +229,8 @@ function parseMessage(data: Buffer): McpRequest | null {
 }
 
 function createChatHandler(
-  bedrock: BedrockConfig,
-  authenticate: (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null>,
-  chatStore: ReturnType<typeof createChatHistoryStore>
+  context: ChatWorkflowContext,
+  authenticate: (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null>
 ) {
   return async function handleChat(req: IncomingMessage, res: ServerResponse) {
     if (req.method !== 'POST') {
@@ -217,116 +260,179 @@ function createChatHandler(
     }
     logger.info({ user: requester.sub, messagePreview: message.slice(0, 120) }, 'Parsed chat message body');
 
-    const sessionIdRaw = typeof body?.sessionId === 'string' ? body.sessionId.trim() : '';
-    const sessionId = sessionIdRaw.length > 0 ? sessionIdRaw : `${requester.sub}#${crypto.randomUUID()}`;
-    const messageId =
-      typeof body?.messageId === 'string' && body.messageId.trim().length > 0
-        ? body.messageId.trim()
-        : crypto.randomUUID();
+    const identifiers = resolveChatIdentifiers(
+      requester.sub,
+      typeof body?.sessionId === 'string' ? body.sessionId : undefined,
+      typeof body?.messageId === 'string' ? body.messageId : undefined
+    );
 
-    logger.info({ user: requester.sub }, 'Received chat turn');
+    logger.info({ user: requester.sub, sessionId: identifiers.sessionId }, 'Received chat turn');
 
     try {
-      const existingMessages = await chatStore.listMessages(sessionId, 200);
-      const unauthorized = existingMessages.some((item) => item.userId !== requester.sub);
-      if (unauthorized) {
-        sendErrorJson(res, 403, 'You do not have access to this conversation.');
-        return;
-      }
-      logger.info({ user: requester.sub, sessionId, existingMessages: existingMessages.length }, 'Loaded existing conversation history');
-
-      const isFirstMessage = existingMessages.length === 0;
-
-      const userMessageTimestamp = new Date().toISOString();
-
-      await chatStore.putMessage({
-        sessionId,
-        createdAt: userMessageTimestamp,
-        messageId,
-        role: 'user',
-        content: message,
-        userId: requester.sub,
-      });
-      logger.info({ user: requester.sub, sessionId, messageId, timestamp: userMessageTimestamp }, 'Stored user message');
-
-      await chatStore.upsertSummary({
-        sessionId,
-        userId: requester.sub,
-        lastMessageAt: userMessageTimestamp,
-        lastRole: 'user',
-        lastMessagePreview: buildMessagePreview(message),
-        title: isFirstMessage ? buildSessionTitle(message) : undefined,
-      });
-      logger.info({ user: requester.sub, sessionId }, 'Updated session summary after user message');
-
-      const historyForModel = existingMessages
-        .filter((entry) => entry.role === 'user' || entry.role === 'assistant')
-        .map((entry) => ({
-          role: entry.role as 'user' | 'assistant',
-          content: entry.content,
-        }));
-
-      const result = await runChatTurn({
-        userMessage: message,
-        history: historyForModel,
-        bedrock,
-        toolDefinitions,
-        toolRegistry,
-        logger,
-        currentUserId: requester.sub,
-      });
-      logger.info({ user: requester.sub, sessionId, toolCalls: result.toolCalls }, 'runChatTurn completed');
-
-      const assistantReply =
-        typeof result.reply === 'string' ? result.reply : JSON.stringify(result.reply, null, 2);
-
-      let assistantMessageTimestamp = new Date().toISOString();
-      if (assistantMessageTimestamp <= userMessageTimestamp) {
-        assistantMessageTimestamp = new Date(Date.parse(userMessageTimestamp) + 1).toISOString();
-      }
-
-      await chatStore.putMessage({
-        sessionId,
-        createdAt: assistantMessageTimestamp,
-        messageId: crypto.randomUUID(),
-        role: 'assistant',
-        content: assistantReply,
-        userId: requester.sub,
-        metadata: {
-          toolCalls: result.toolCalls,
-          rawReply: result.reply,
+      const result = await processChatRequest(
+        context,
+        {
+          requester,
+          message,
+          identifiers,
         },
-      });
-      logger.info({ user: requester.sub, sessionId, timestamp: assistantMessageTimestamp }, 'Stored assistant reply');
-
-      await chatStore.upsertSummary({
-        sessionId,
-        userId: requester.sub,
-        lastMessageAt: assistantMessageTimestamp,
-        lastRole: 'assistant',
-        lastMessagePreview: buildMessagePreview(assistantReply),
-      });
-      logger.info({ user: requester.sub, sessionId }, 'Updated session summary after assistant reply');
+        undefined
+      );
 
       sendJson(res, 200, {
-        sessionId,
+        sessionId: result.sessionId,
         reply: result.reply,
         toolCalls: result.toolCalls,
       });
-      logger.info({ user: requester.sub, sessionId }, 'Sent chat response to client');
+      logger.info({ user: requester.sub, sessionId: result.sessionId }, 'Sent chat response to client');
     } catch (error) {
+      if (error instanceof RequestError) {
+        sendErrorJson(res, error.status, error.message);
+        return;
+      }
       logger.error({ err: error }, 'Chat orchestrator failed');
       sendErrorJson(res, 500, 'Failed to process chat request');
     }
   };
 }
 
+function createChatStreamHandler(
+  context: ChatWorkflowContext,
+  authenticate: (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null>
+) {
+  return async function handleChatStream(req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== 'POST') {
+      sendErrorJson(res, 405, 'Method not allowed');
+      return;
+    }
+
+    const requester = await authenticate(req, res);
+    if (!requester) {
+      return;
+    }
+    logger.info({ user: requester.sub }, 'Authenticated streaming chat request');
+
+    let body: any;
+    try {
+      body = await readJsonBody(req);
+    } catch (error) {
+      logger.warn({ err: error }, 'Failed to read request body');
+      sendErrorJson(res, 400, 'Invalid JSON payload');
+      return;
+    }
+
+    const message = typeof body?.message === 'string' ? body.message.trim() : '';
+    if (!message) {
+      sendErrorJson(res, 400, 'message is required');
+      return;
+    }
+
+    const identifiers = resolveChatIdentifiers(
+      requester.sub,
+      typeof body?.sessionId === 'string' ? body.sessionId : undefined,
+      typeof body?.messageId === 'string' ? body.messageId : undefined
+    );
+
+    const upstreamAbort = new AbortController();
+    const channel = createSseChannel(req, res, () => {
+      upstreamAbort.abort();
+    });
+    channel.send('ack', {
+      sessionId: identifiers.sessionId,
+      messageId: identifiers.messageId,
+    });
+
+    const hooks: ChatWorkflowHooks = {
+      onStatus(stage, details) {
+        channel.send('status', { stage, ...details });
+      },
+      runEvents: {
+        onDecision(decision) {
+          channel.send('decision', decision);
+        },
+        onToolInvocationStart(toolName, args) {
+          channel.send('tool_call', {
+            stage: 'start',
+            toolName,
+            arguments: args ?? {},
+          });
+        },
+        onToolInvocationComplete(toolName, output) {
+          channel.send('tool_call', {
+            stage: 'complete',
+            toolName,
+            output,
+          });
+        },
+      },
+      streaming: {
+        enabled: true,
+        onAssistantDelta(text) {
+          if (typeof text === 'string' && text.length > 0) {
+            channel.send('assistant_delta', {
+              sessionId: identifiers.sessionId,
+              text,
+            });
+          }
+        },
+        abortSignal: upstreamAbort.signal,
+        onComplete() {
+          channel.send('done', { sessionId: identifiers.sessionId });
+          channel.close();
+        },
+      },
+    };
+
+    try {
+      const result = await processChatRequest(
+        context,
+        {
+          requester,
+          message,
+          identifiers,
+        },
+        hooks
+      );
+
+      channel.send('assistant_message', {
+        sessionId: result.sessionId,
+        content: result.assistantText,
+        reply: result.reply,
+        toolCalls: result.toolCalls,
+        messageId: result.assistantMessageId,
+        createdAt: result.assistantMessageAt,
+      });
+      hooks.streaming?.onComplete?.();
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') {
+        logger.info({ user: requester.sub, sessionId: identifiers.sessionId }, 'Streaming chat aborted by client');
+        channel.close();
+        return;
+      }
+      if (error instanceof RequestError) {
+        channel.send('error', { status: error.status, message: error.message });
+      } else {
+        logger.error({ err: error }, 'Streaming chat orchestrator failed');
+        channel.send('error', { status: 500, message: 'Failed to process chat request' });
+      }
+      channel.close();
+    }
+  };
+}
 export function createMcpServer(options: ServerOptions) {
   const { host, port, cognito, bedrock, chatTable } = options;
   const verifyToken = createCognitoVerifier(cognito);
   const chatHistoryStore = createChatHistoryStore(chatTable);
   const authenticate = createAuthenticator(verifyToken);
-  const chatHandler = createChatHandler(bedrock, authenticate, chatHistoryStore);
+  const workflowContext: ChatWorkflowContext = {
+    bedrock,
+    chatStore: chatHistoryStore,
+    logger,
+    toolDefinitions,
+    toolRegistry,
+  };
+  const chatHandler = createChatHandler(workflowContext, authenticate);
+  const chatStreamHandler = createChatStreamHandler(workflowContext, authenticate);
 
   const httpServer = createServer(async (req, res) => {
     applyCors(req, res);
@@ -345,8 +451,22 @@ export function createMcpServer(options: ServerOptions) {
       return;
     }
 
+    if (req.method === 'GET' && path === '/metrics') {
+      const body = renderPrometheusMetrics();
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain; version=0.0.4');
+      res.setHeader('Content-Length', Buffer.byteLength(body));
+      res.end(body);
+      return;
+    }
+
     if (req.method === 'POST' && path === '/chat') {
       await chatHandler(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && path === '/chat/stream') {
+      await chatStreamHandler(req, res);
       return;
     }
 
@@ -576,6 +696,149 @@ function createAuthenticator(
   };
 }
 
+function resolveChatIdentifiers(userSub: string, sessionIdRaw?: string, messageIdRaw?: string): ChatIdentifiers {
+  const sessionInput = sessionIdRaw?.trim() ?? '';
+  const messageInput = messageIdRaw?.trim() ?? '';
+
+  const sessionId = sessionInput.length > 0 ? sessionInput : `${userSub}#${crypto.randomUUID()}`;
+  const messageId = messageInput.length > 0 ? messageInput : crypto.randomUUID();
+
+  return {
+    sessionId,
+    messageId,
+  };
+}
+
+interface ChatRequestPayload {
+  requester: AuthenticatedUser;
+  message: string;
+  identifiers: ChatIdentifiers;
+}
+
+interface ChatProcessingResult {
+  sessionId: string;
+  reply: RunChatTurnResult['reply'];
+  assistantText: string;
+  toolCalls: RunChatTurnResult['toolCalls'];
+  assistantMessageId: string;
+  assistantMessageAt: string;
+}
+
+async function processChatRequest(
+  context: ChatWorkflowContext,
+  payload: ChatRequestPayload,
+  hooks?: ChatWorkflowHooks
+): Promise<ChatProcessingResult> {
+  const { chatStore, bedrock, logger, toolDefinitions, toolRegistry } = context;
+  const { requester, message, identifiers } = payload;
+  const { sessionId, messageId } = identifiers;
+
+  hooks?.onStatus?.('history_loading');
+  const existingMessages = await chatStore.listMessages(sessionId, 200);
+  hooks?.onStatus?.('history_loaded', { count: existingMessages.length });
+
+  const unauthorized = existingMessages.some((item) => item.userId !== requester.sub);
+  if (unauthorized) {
+    throw new RequestError(403, 'You do not have access to this conversation.');
+  }
+  logger.info({ user: requester.sub, sessionId, existingMessages: existingMessages.length }, 'Loaded existing conversation history');
+
+  const isFirstMessage = existingMessages.length === 0;
+  const userMessageTimestamp = new Date().toISOString();
+
+  await chatStore.putMessage({
+    sessionId,
+    createdAt: userMessageTimestamp,
+    messageId,
+    role: 'user',
+    content: message,
+    userId: requester.sub,
+  });
+  hooks?.onStatus?.('user_message_stored', { messageId });
+  logger.info({ user: requester.sub, sessionId, messageId, timestamp: userMessageTimestamp }, 'Stored user message');
+
+  await chatStore.upsertSummary({
+    sessionId,
+    userId: requester.sub,
+    lastMessageAt: userMessageTimestamp,
+    lastRole: 'user',
+    lastMessagePreview: buildMessagePreview(message),
+    title: isFirstMessage ? buildSessionTitle(message) : undefined,
+  });
+
+  const historyForModel = existingMessages
+    .filter((entry) => entry.role === 'user' || entry.role === 'assistant')
+    .map((entry) => ({
+      role: entry.role as 'user' | 'assistant',
+      content: entry.content,
+    }));
+
+  hooks?.onStatus?.('model_inference');
+  const result = await runChatTurnWithEvents(
+    {
+      userMessage: message,
+      history: historyForModel,
+      bedrock,
+      toolDefinitions,
+      toolRegistry,
+      logger,
+      currentUserId: requester.sub,
+    },
+    hooks?.runEvents,
+    hooks?.streaming
+  );
+  hooks?.onStatus?.('assistant_reply_ready');
+  logger.info({ user: requester.sub, sessionId, toolCalls: result.toolCalls }, 'runChatTurn completed');
+
+  const assistantReply = typeof result.reply === 'string' ? result.reply : JSON.stringify(result.reply, null, 2);
+
+  let assistantMessageTimestamp = new Date().toISOString();
+  if (assistantMessageTimestamp <= userMessageTimestamp) {
+    assistantMessageTimestamp = new Date(Date.parse(userMessageTimestamp) + 1).toISOString();
+  }
+  const assistantMessageId = crypto.randomUUID();
+
+  await chatStore.putMessage({
+    sessionId,
+    createdAt: assistantMessageTimestamp,
+    messageId: assistantMessageId,
+    role: 'assistant',
+    content: assistantReply,
+    userId: requester.sub,
+    metadata: {
+      toolCalls: result.toolCalls,
+      rawReply: result.reply,
+    },
+  });
+  hooks?.onStatus?.('assistant_message_stored', { messageId: assistantMessageId });
+  logger.info({ user: requester.sub, sessionId, timestamp: assistantMessageTimestamp }, 'Stored assistant reply');
+
+  const summary = await safeGenerateSummary(bedrock, {
+    titleSeed: isFirstMessage ? message : undefined,
+    assistantReply,
+    history: historyForModel,
+    logger,
+  });
+
+  await chatStore.upsertSummary({
+    sessionId,
+    userId: requester.sub,
+    lastMessageAt: assistantMessageTimestamp,
+    lastRole: 'assistant',
+    lastMessagePreview: buildMessagePreview(assistantReply),
+    title: summary?.title,
+  });
+
+  return {
+    sessionId,
+    reply: result.reply,
+    assistantText: assistantReply,
+    toolCalls: result.toolCalls,
+    assistantMessageId,
+    assistantMessageAt: assistantMessageTimestamp,
+  };
+}
+
 function buildMessagePreview(text: string, maxLength = 180): string {
   const trimmed = text.trim().replace(/\s+/g, ' ');
   if (!trimmed) {
@@ -596,6 +859,48 @@ function buildSessionTitle(text: string): string {
     return 'New chat';
   }
   return preview;
+}
+
+async function safeGenerateSummary(
+  bedrock: BedrockConfig,
+  options: {
+    titleSeed?: string;
+    assistantReply: string;
+    history: Array<{ role: 'user' | 'assistant'; content: string }>;
+    logger: Logger;
+  }
+): Promise<{ title?: string } | null> {
+  try {
+    const promptParts: string[] = [];
+    promptParts.push('Conversation so far:');
+    for (const entry of options.history.slice(-5)) {
+      const speaker = entry.role === 'assistant' ? 'Assistant' : 'User';
+      promptParts.push(`${speaker}: ${entry.content}`);
+    }
+    promptParts.push('Assistant:', options.assistantReply);
+    promptParts.push(
+      '',
+      'Please provide a short (max 12 words) title summarizing this conversation turn.',
+      'Respond only with the title text.'
+    );
+
+    const summaryText = await invokeModel(bedrock, {
+      messages: [
+        { role: 'system', content: 'You write concise titles for chat conversations.' },
+        { role: 'user', content: promptParts.join('\n') },
+      ],
+      maxOutputTokens: 64,
+      temperature: 0.3,
+    });
+    const title = summaryText.split('\n')[0].trim().replace(/^"|"$/g, '');
+    if (!title) {
+      return null;
+    }
+    return { title };
+  } catch (error) {
+    options.logger.warn({ err: error }, 'Failed to generate conversation summary');
+    return null;
+  }
 }
 
 function clampLimit(raw: string): number | undefined {
@@ -633,4 +938,38 @@ function buildSearchSnippet(content: string, query: string, radius = 60): string
   const suffix = end < content.length ? '…' : '';
 
   return `${prefix}${content.slice(start, end)}${suffix}`;
+}
+
+function createSseChannel(req: IncomingMessage, res: ServerResponse, onClose?: () => void) {
+  let closed = false;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+
+  (res as any).flushHeaders?.();
+
+  req.on('close', () => {
+    closed = true;
+    onClose?.();
+  });
+
+  return {
+    send(event: string, data: unknown) {
+      if (closed || res.writableEnded) {
+        return;
+      }
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    },
+    close() {
+      if (closed || res.writableEnded) {
+        return;
+      }
+      closed = true;
+      res.end();
+    },
+  };
 }

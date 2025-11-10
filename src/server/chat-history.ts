@@ -1,9 +1,8 @@
 import { BatchWriteCommand, GetCommand, PutCommand, QueryCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
 import type { DynamoTableConfig } from '../config/env';
-
-export type ChatMessageRole = 'user' | 'assistant' | 'system';
 import { dynamoDocumentClient } from '../datasources/dynamo';
+import type { ChatMessageRole, ChatSearchResult } from './chat-types';
 
 const SUMMARY_SORT_KEY = '__SUMMARY__';
 const SUMMARY_ITEM_TYPE = 'summary';
@@ -17,14 +16,6 @@ export interface PersistedChatMessage {
   content: string;
   userId: string;
   metadata?: Record<string, unknown>;
-}
-
-function cryptoRandomId() {
-  try {
-    return randomUUID();
-  } catch {
-    return Math.random().toString(36).slice(2);
-  }
 }
 
 export interface ChatSessionSummary {
@@ -47,12 +38,13 @@ export interface ChatSessionSummaryInput {
   title?: string;
 }
 
-export interface ChatSearchResult {
+export interface ChatSessionSummaryInput {
   sessionId: string;
-  messageId: string;
-  content: string;
-  createdAt: string;
-  role: ChatMessageRole;
+  userId: string;
+  lastMessageAt: string;
+  lastRole?: ChatMessageRole;
+  lastMessagePreview?: string;
+  title?: string;
 }
 
 interface ChatHistoryStore {
@@ -73,6 +65,14 @@ function isSummaryItem(sortKeyName: string, item: Record<string, any>): boolean 
     return item[sortKeyName] === SUMMARY_SORT_KEY;
   }
   return item.itemType === SUMMARY_ITEM_TYPE;
+}
+
+function cryptoRandomId() {
+  try {
+    return randomUUID();
+  } catch {
+    return Math.random().toString(36).slice(2);
+  }
 }
 
 export function createChatHistoryStore(config: DynamoTableConfig): ChatHistoryStore {

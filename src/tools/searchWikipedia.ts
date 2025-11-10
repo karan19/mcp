@@ -1,4 +1,5 @@
 import { McpToolDefinition, ToolHandler } from './types';
+import { performToolFetch } from './httpClient';
 
 interface WikipediaSearchItem {
   title: string;
@@ -30,7 +31,7 @@ export const searchWikipediaDefinition: McpToolDefinition = {
   },
 };
 
-export const searchWikipediaHandler: ToolHandler = async (args) => {
+export const searchWikipediaHandler: ToolHandler = async (args, context) => {
   const query = String(args.query ?? '').trim();
   const language = String(args.language ?? 'en');
   const numResults = Math.min(Number(args.numResults ?? 5), 10);
@@ -48,16 +49,29 @@ export const searchWikipediaHandler: ToolHandler = async (args) => {
   endpoint.searchParams.set('formatversion', '2');
   endpoint.searchParams.set('srlimit', String(numResults));
 
-  const response = await fetch(endpoint.toString(), {
-    headers: {
-      Accept: 'application/json',
-    },
-  });
+  const cacheKey = `search.wikipedia|${language}|${query}|${numResults}`;
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Wikipedia search failed with status ${response.status}: ${body}`);
-  }
+  const response = await performToolFetch(
+    'search.wikipedia',
+    context.logger,
+    (signal) =>
+      fetch(endpoint.toString(), {
+        headers: {
+          Accept: 'application/json',
+        },
+        signal,
+      }),
+    {
+      timeoutMs: 8_000,
+      cacheKey,
+      cacheTtlMs: 5 * 60 * 1000,
+      serveStaleOnError: true,
+    }
+  );
+
+  const cacheStatus = response.headers.get('x-cache-status');
+  const cacheAgeSeconds = response.headers.get('x-cache-age');
+  const staleNote = cacheStatus === 'stale' ? ` (cached ${cacheAgeSeconds ?? '?'}s ago)` : '';
 
   const payload = await response.json();
   const items: WikipediaSearchItem[] = payload?.query?.search ?? [];
@@ -67,7 +81,7 @@ export const searchWikipediaHandler: ToolHandler = async (args) => {
       content: [
         {
           type: 'text',
-          text: `No Wikipedia results found for "${query}" (${language}).`,
+          text: `No Wikipedia results found for "${query}" (${language}).${staleNote}`,
         },
       ],
     };
@@ -83,7 +97,7 @@ export const searchWikipediaHandler: ToolHandler = async (args) => {
     content: [
       {
         type: 'text',
-        text: `Top Wikipedia results for "${query}" (${language}):\n${bullets.join('\n')}`,
+        text: `Top Wikipedia results for "${query}" (${language}):${staleNote}\n${bullets.join('\n')}`,
       },
     ],
   };

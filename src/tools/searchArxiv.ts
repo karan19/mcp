@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { McpToolDefinition, ToolHandler } from './types';
+import { performToolFetch } from './httpClient';
 
 interface ArxivEntry {
   title?: string;
@@ -32,7 +33,7 @@ export const searchArxivDefinition: McpToolDefinition = {
   },
 };
 
-export const searchArxivHandler: ToolHandler = async (args) => {
+export const searchArxivHandler: ToolHandler = async (args, context) => {
   const query = String(args.query ?? '').trim();
   const maxResults = Math.min(Number(args.maxResults ?? 5), 10);
 
@@ -42,17 +43,30 @@ export const searchArxivHandler: ToolHandler = async (args) => {
 
   const endpoint = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=${maxResults}`;
 
-  const response = await fetch(endpoint, {
-    headers: {
-      Accept: 'application/atom+xml',
-      'User-Agent': 'NexusNote-MCP/0.1 (+https://example.com)',
-    },
-  });
+  const cacheKey = `search.arxiv|${query}|${maxResults}`;
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`arXiv request failed with status ${response.status}: ${body}`);
-  }
+  const response = await performToolFetch(
+    'search.arxiv',
+    context.logger,
+    (signal) =>
+      fetch(endpoint, {
+        headers: {
+          Accept: 'application/atom+xml',
+          'User-Agent': 'NexusNote-MCP/0.1 (+https://example.com)',
+        },
+        signal,
+      }),
+    {
+      timeoutMs: 12_000,
+      cacheKey,
+      cacheTtlMs: 10 * 60 * 1000,
+      serveStaleOnError: true,
+    }
+  );
+
+  const cacheStatus = response.headers.get('x-cache-status');
+  const cacheAgeSeconds = response.headers.get('x-cache-age');
+  const staleNote = cacheStatus === 'stale' ? ` (cached ${cacheAgeSeconds ?? '?'}s ago)` : '';
 
   const xml = await response.text();
   const parsed = parser.parse(xml, true);
@@ -63,7 +77,7 @@ export const searchArxivHandler: ToolHandler = async (args) => {
       content: [
         {
           type: 'text',
-          text: `No arXiv results found for "${query}".`,
+          text: `No arXiv results found for "${query}".${staleNote}`,
         },
       ],
     };
@@ -86,7 +100,7 @@ export const searchArxivHandler: ToolHandler = async (args) => {
     content: [
       {
         type: 'text',
-        text: `Top arXiv results for "${query}":\n${bullets.join('\n')}`,
+        text: `Top arXiv results for "${query}":${staleNote}\n${bullets.join('\n')}`,
       },
     ],
   };

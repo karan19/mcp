@@ -164,6 +164,8 @@ export function ChatPage() {
   const {
     messages,
     pending,
+    streamingActive,
+    pendingStatus,
     error,
     historyError,
     conversations,
@@ -175,6 +177,7 @@ export function ChatPage() {
     selectConversation,
     deleteConversation,
     searchConversations,
+    stopStreaming,
   } = useChatSession();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -547,7 +550,16 @@ export function ChatPage() {
                   )}
                 </div>
               ))}
-              {pending ? <div className="modern-main__status modern-main__status--pending">Waiting for assistant…</div> : null}
+              {pendingStatus ? (
+                <div className="modern-main__status modern-main__status--pending">
+                  <span>{pendingStatus}</span>
+                  {streamingActive ? (
+                    <button type="button" className="modern-main__status-stop" onClick={stopStreaming}>
+                      Stop
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="modern-empty">

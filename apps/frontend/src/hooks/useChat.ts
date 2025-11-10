@@ -20,6 +20,11 @@ interface SendMessageArgs {
   content: string;
 }
 
+interface InternalSendArgs {
+  message: string;
+  userMessage: ChatMessage;
+}
+
 function createMessageId() {
   const cryptoRef = globalThis.crypto as Crypto | undefined;
   if (cryptoRef && typeof cryptoRef.randomUUID === 'function') {
@@ -28,10 +33,17 @@ function createMessageId() {
   return Math.random().toString(36).slice(2);
 }
 
+interface ParsedSseEvent {
+  event: string;
+  data?: any;
+}
+
 export function useChatSession() {
   const { getIdToken } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+  const [streamingActive, setStreamingActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -39,6 +51,8 @@ export function useChatSession() {
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const streamingAssistantRef = useRef<string | null>(null);
+  const streamingEnabled = appConfig.chatStreamingEnabled && typeof ReadableStream !== 'undefined';
 
   const refreshConversations = useCallback(async () => {
     setLoadingConversations(true);
@@ -67,6 +81,15 @@ export function useChatSession() {
     []
   );
 
+  const stopStreaming = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    setPending(false);
+    setPendingStatus('Generation stopped');
+    setStreamingActive(false);
+  }, []);
+
   const selectConversation = useCallback(
     async (targetSessionId: string) => {
       setLoadingHistory(true);
@@ -87,25 +110,9 @@ export function useChatSession() {
     [getIdToken]
   );
 
-  const sendMessage = useCallback(
-    async ({ content }: SendMessageArgs) => {
-      const trimmed = content.trim();
-      if (!trimmed) {
-        return;
-      }
-
-      const userMessage: ChatMessage = {
-        id: createMessageId(),
-        role: 'user',
-        content: trimmed,
-        createdAt: new Date().toISOString(),
-      };
-
-      setMessages((current) => [...current, userMessage]);
-      setPending(true);
-      setError(null);
-
-      abortRef.current?.abort();
+  const sendStandardMessageInternal = useCallback(
+    async ({ message, userMessage }: InternalSendArgs) => {
+      setPendingStatus('Waiting for assistant…');
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -115,7 +122,7 @@ export function useChatSession() {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            message: trimmed,
+            message,
             sessionId: sessionId ?? undefined,
             messageId: userMessage.id,
           }),
@@ -154,13 +161,226 @@ export function useChatSession() {
           createdAt: new Date().toISOString(),
         };
         setMessages((current) => [...current, fallbackMessage]);
-        const message = err instanceof Error ? err.message : 'Chat request failed.';
-        setError(message);
+        const messageText = err instanceof Error ? err.message : 'Chat request failed.';
+        setError(messageText);
       } finally {
         setPending(false);
+        setPendingStatus(null);
       }
     },
     [getIdToken, refreshConversations, sessionId]
+  );
+
+  const sendStreamingMessageInternal = useCallback(
+    async ({ message, userMessage }: InternalSendArgs) => {
+      setPendingStatus('Connecting to assistant…');
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setStreamingActive(true);
+      streamingAssistantRef.current = null;
+
+      const headers = await buildAuthHeaders(getIdToken);
+      headers.Accept = 'text/event-stream';
+
+      const response = await fetch(`${appConfig.apiBaseUrl}/chat/stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          message,
+          sessionId: sessionId ?? undefined,
+          messageId: userMessage.id,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Streaming chat request failed (${response.status})`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let aborted = false;
+
+      const handleEvent = (event: ParsedSseEvent) => {
+        switch (event.event) {
+          case 'ack':
+            if (typeof event.data?.sessionId === 'string') {
+              setSessionId(event.data.sessionId);
+            }
+            setPendingStatus('Request received…');
+            break;
+          case 'status':
+            setPendingStatus(describeStage(event.data?.stage));
+            break;
+          case 'decision':
+            if (event.data?.action === 'call_tool' && event.data?.tool) {
+              setPendingStatus(`Planning tool ${event.data.tool}…`);
+            }
+            break;
+          case 'tool_call': {
+            const toolName = event.data?.toolName ?? 'tool';
+            if (event.data?.stage === 'start') {
+              setPendingStatus(`Running ${toolName}…`);
+            } else if (event.data?.stage === 'complete') {
+              setPendingStatus(`Finished ${toolName}`);
+            }
+            break;
+          }
+          case 'assistant_delta': {
+            const deltaText = typeof event.data?.text === 'string' ? event.data.text : '';
+            if (!deltaText) {
+              break;
+            }
+            if (!streamingAssistantRef.current) {
+              const draftId = createMessageId();
+              streamingAssistantRef.current = draftId;
+              const draft: ChatMessage = {
+                id: draftId,
+                role: 'assistant',
+                content: deltaText,
+                createdAt: new Date().toISOString(),
+              };
+              setMessages((current) => [...current, draft]);
+            } else {
+              const targetId = streamingAssistantRef.current;
+              setMessages((current) =>
+                current.map((message) =>
+                  message.id === targetId
+                    ? { ...message, content: `${message.content}${deltaText}` }
+                    : message
+                )
+              );
+            }
+            break;
+          }
+          case 'assistant_message': {
+            setPending(false);
+            setPendingStatus(null);
+            const assistantMessage: ChatMessage = {
+              id: typeof event.data?.messageId === 'string' ? event.data.messageId : createMessageId(),
+              role: 'assistant',
+              content: typeof event.data?.content === 'string' ? event.data.content : '',
+              createdAt: typeof event.data?.createdAt === 'string' ? event.data.createdAt : new Date().toISOString(),
+              toolCalls: Array.isArray(event.data?.toolCalls) ? (event.data.toolCalls as ToolCall[]) : undefined,
+            };
+            if (typeof event.data?.sessionId === 'string') {
+              setSessionId(event.data.sessionId);
+            }
+            setMessages((current) => {
+              const targetId = streamingAssistantRef.current;
+              if (targetId) {
+                let replaced = false;
+                const next = current.map((message) => {
+                  if (message.id === targetId) {
+                    replaced = true;
+                    return assistantMessage;
+                  }
+                  return message;
+                });
+                streamingAssistantRef.current = null;
+                return replaced ? next : [...next, assistantMessage];
+              }
+              return [...current, assistantMessage];
+            });
+            break;
+          }
+          case 'error': {
+            setPending(false);
+            setPendingStatus(null);
+            streamingAssistantRef.current = null;
+            const messageText =
+              typeof event.data?.message === 'string'
+                ? event.data.message
+                : 'The assistant could not process your request.';
+            setError(messageText);
+            setMessages((current) => [
+              ...current,
+              {
+                id: createMessageId(),
+                role: 'assistant',
+                content: 'I ran into an error while processing your request.',
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            break;
+          }
+          case 'done':
+            setPending(false);
+            setPendingStatus(null);
+            streamingAssistantRef.current = null;
+            break;
+          default:
+            break;
+        }
+      };
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          buffer = consumeSseBuffer(buffer, handleEvent);
+        }
+      } catch (err) {
+        reader.releaseLock?.();
+        if (controller.signal.aborted) {
+          aborted = true;
+        } else {
+          throw err;
+        }
+      } finally {
+        reader.releaseLock?.();
+        setPending(false);
+        setPendingStatus(null);
+        setStreamingActive(false);
+        if (controller.signal.aborted) {
+          streamingAssistantRef.current = null;
+        }
+      }
+
+      if (!aborted) {
+        await refreshConversations();
+      }
+    },
+    [getIdToken, refreshConversations, sessionId]
+  );
+
+  const sendMessage = useCallback(
+    async ({ content }: SendMessageArgs) => {
+      const trimmed = content.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const userMessage: ChatMessage = {
+        id: createMessageId(),
+        role: 'user',
+        content: trimmed,
+        createdAt: new Date().toISOString(),
+      };
+
+      setMessages((current) => [...current, userMessage]);
+      setPending(true);
+      setPendingStatus('Sending message…');
+      setError(null);
+
+      abortRef.current?.abort();
+
+      if (streamingEnabled) {
+        try {
+          await sendStreamingMessageInternal({ message: trimmed, userMessage });
+          return;
+        } catch (err) {
+          console.warn('Streaming chat failed, falling back to standard flow', err);
+        }
+      }
+
+      await sendStandardMessageInternal({ message: trimmed, userMessage });
+    },
+    [sendStandardMessageInternal, sendStreamingMessageInternal, streamingEnabled]
   );
 
   const startNewConversation = useCallback(() => {
@@ -168,6 +388,9 @@ export function useChatSession() {
     setMessages([]);
     setSessionId(null);
     setError(null);
+    setPendingStatus(null);
+    streamingAssistantRef.current = null;
+    setStreamingActive(false);
   }, []);
 
   const deleteConversation = useCallback(
@@ -208,6 +431,8 @@ export function useChatSession() {
     () => ({
       messages,
       pending,
+      streamingActive,
+      pendingStatus,
       error,
       sessionId,
       conversations,
@@ -215,7 +440,7 @@ export function useChatSession() {
       loadingHistory,
       historyError,
     }),
-    [messages, pending, error, sessionId, conversations, loadingConversations, loadingHistory, historyError]
+    [messages, pending, streamingActive, pendingStatus, error, sessionId, conversations, loadingConversations, loadingHistory, historyError]
   );
 
   return {
@@ -226,6 +451,7 @@ export function useChatSession() {
     refreshConversations,
     selectConversation,
     searchConversations,
+    stopStreaming,
   };
 }
 
@@ -271,6 +497,69 @@ function extractToolCalls(metadata: Record<string, unknown> | undefined): ToolCa
   }
 
   return calls.length ? calls : undefined;
+}
+
+function consumeSseBuffer(buffer: string, emit: (event: ParsedSseEvent) => void): string {
+  let separatorIndex = buffer.indexOf('\n\n');
+  while (separatorIndex !== -1) {
+    const rawEvent = buffer.slice(0, separatorIndex);
+    buffer = buffer.slice(separatorIndex + 2);
+
+    if (rawEvent.trim().length === 0) {
+      separatorIndex = buffer.indexOf('\n\n');
+      continue;
+    }
+
+    const lines = rawEvent.split('\n');
+    let eventName = 'message';
+    const dataLines: string[] = [];
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+
+    const dataPayload = dataLines.join('\n');
+    let data: unknown;
+    if (dataPayload) {
+      try {
+        data = JSON.parse(dataPayload);
+      } catch {
+        data = dataPayload;
+      }
+    }
+
+    emit({ event: eventName, data });
+    separatorIndex = buffer.indexOf('\n\n');
+  }
+
+  return buffer;
+}
+
+function describeStage(stage: unknown): string {
+  if (typeof stage !== 'string') {
+    return 'Processing…';
+  }
+
+  switch (stage) {
+    case 'history_loading':
+      return 'Loading conversation history…';
+    case 'history_loaded':
+      return 'History ready.';
+    case 'user_message_stored':
+      return 'Message saved.';
+    case 'model_inference':
+      return 'Thinking…';
+    case 'assistant_reply_ready':
+      return 'Preparing response…';
+    case 'assistant_message_stored':
+      return 'Assistant reply saved.';
+    default:
+      return 'Processing…';
+  }
 }
 
 function sortByTimestamp(a: ChatMessage, b: ChatMessage) {

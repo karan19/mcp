@@ -1,4 +1,5 @@
 import { McpToolDefinition, ToolHandler } from './types';
+import { performToolFetch } from './httpClient';
 
 interface SerpApiOrganicResult {
   title?: string;
@@ -47,17 +48,29 @@ export const searchWebHandler: ToolHandler = async (args, context) => {
   url.searchParams.set('num', String(numResults));
   url.searchParams.set('api_key', SERP_API_KEY);
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      Accept: 'application/json',
-    },
-  });
+  const cacheKey = `search.web|${query}|${numResults}`;
 
-  if (!response.ok) {
-    const body = await response.text();
-    context.logger.error({ status: response.status, body }, 'SerpAPI request failed');
-    throw new Error(`SerpAPI request failed with status ${response.status}`);
-  }
+  const response = await performToolFetch(
+    'search.web',
+    context.logger,
+    (signal) =>
+      fetch(url.toString(), {
+        headers: {
+          Accept: 'application/json',
+        },
+        signal,
+      }),
+    {
+      timeoutMs: 10_000,
+      cacheKey,
+      cacheTtlMs: 2 * 60 * 1000,
+      serveStaleOnError: true,
+    }
+  );
+
+  const cacheStatus = response.headers.get('x-cache-status');
+  const cacheAgeSeconds = response.headers.get('x-cache-age');
+  const staleNote = cacheStatus === 'stale' ? ` (cached ${cacheAgeSeconds ?? '?'}s ago)` : '';
 
   const payload = await response.json();
   const organic: SerpApiOrganicResult[] = payload.organic_results ?? [];
@@ -67,10 +80,10 @@ export const searchWebHandler: ToolHandler = async (args, context) => {
       content: [
         {
           type: 'text',
-          text: `No results found for "${query}" using SerpAPI.`,
-        },
-      ],
-    };
+        text: `No results found for "${query}" using SerpAPI.${staleNote}`,
+      },
+    ],
+  };
   }
 
   const bullets = organic.slice(0, numResults).map((result, index) => {
@@ -84,7 +97,7 @@ export const searchWebHandler: ToolHandler = async (args, context) => {
     content: [
       {
         type: 'text',
-        text: `Top web results for "${query}":\n${bullets.join('\n')}`,
+        text: `Top web results for "${query}":${staleNote}\n${bullets.join('\n')}`,
       },
     ],
   };
