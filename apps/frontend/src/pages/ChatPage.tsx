@@ -153,6 +153,8 @@ export function ChatPage() {
           collapsed={sidebarCollapsed}
           onCollapsedChange={setSidebarCollapsed}
           onSearch={() => setSearchOpen(true)}
+          navigate={navigate}
+          closeSidebar={() => setSidebarOpen(false)}
         />
 
         <main className="flex flex-1 flex-col">
@@ -212,11 +214,8 @@ export function ChatPage() {
                   </ScrollArea>
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center text-center text-muted-foreground">
-                    <p className="text-lg font-semibold text-foreground">Start a new conversation</p>
-                    <p className="mt-2 text-sm">Ask anything—tools, search, and context are only a prompt away.</p>
-                    <Button className="mt-6" onClick={() => startNewConversation()}>
-                      <Plus className="mr-2 h-4 w-4" /> New chat
-                    </Button>
+                <p className="text-lg font-semibold text-foreground">Start a new conversation</p>
+                <p className="mt-2 text-sm">Ask anything—tools, search, and context are only a prompt away.</p>
                   </div>
                 )}
               </div>
@@ -244,7 +243,7 @@ export function ChatPage() {
                         ) : null}
                       </div>
                     ) : (
-                      <span>Powered by Bedrock + NexusNote tools</span>
+                      <span></span>
                     )}
                   </div>
                   <Button type="submit" disabled={pending || !inputValue.trim()}>
@@ -350,6 +349,8 @@ function ConversationSidebar({
   collapsed,
   onCollapsedChange,
   onSearch,
+  navigate,
+  closeSidebar,
 }: {
   conversations: ReturnType<typeof useChatSession>['conversations'];
   loading: boolean;
@@ -362,13 +363,25 @@ function ConversationSidebar({
   collapsed: boolean;
   onCollapsedChange: (value: boolean) => void;
   onSearch: () => void;
+  navigate: ReturnType<typeof useNavigate>;
+  closeSidebar: () => void;
 }) {
   const content = (
     <div className={cn('flex h-full flex-col border-r bg-card transition-all duration-200', collapsed ? 'w-20' : 'w-80')}>
       <div className="flex items-center justify-between border-b px-3 py-3">
         {collapsed ? null : (
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Conversations</p>
+            <button
+              type="button"
+              onClick={() => {
+                onNewConversation();
+                closeSidebar();
+                navigate('/');
+              }}
+              className="text-sm font-semibold uppercase tracking-wide text-primary hover:underline"
+            >
+              Conversations
+            </button>
             <p className="text-xs text-muted-foreground">
               {conversations.length} {conversations.length === 1 ? 'thread' : 'threads'}
             </p>
