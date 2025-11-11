@@ -2,6 +2,9 @@ import type { FormEvent } from 'react';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 
 export function LoginPage() {
   const { login, loading, error, user, initializing } = useAuth();
@@ -44,64 +47,79 @@ export function LoginPage() {
   };
 
   return (
-    <div className="login-layout">
-      <div className="login-hero" aria-hidden="true">
-        <img src="/login-hero.jpg" alt="" />
-      </div>
-      <div className="login-panel">
-        <div className="login-panel-content">
-          <header className="login-header">
-            <h1 className="login-app-name">Chat, MCP</h1>
-          </header>
-          {initializing ? (
-            <p className="login-status">Checking your session…</p>
-          ) : (
-            <form className="login-form" onSubmit={handleSubmit} noValidate>
-              <label className="login-label" htmlFor="username">
-                Username
-              </label>
-              <input
-                id="username"
-                name="username"
-                type="text"
-                autoComplete="username"
-                required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@example.com"
-                className="login-input"
-                aria-describedby={errorId}
-                disabled={loading}
-              />
-              <label className="login-label" htmlFor="password">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="••••••••"
-                className="login-input"
-                aria-describedby={errorId}
-                disabled={loading}
-              />
-              {combinedError && (
-                <p className="login-error" id={errorId} role="alert" aria-live="assertive">
-                  {combinedError}
-                </p>
-              )}
-              <div className="login-actions">
-                <button className="login-submit" type="submit" disabled={loading}>
-                  {loading ? 'Signing in…' : 'Sign in'}
-                </button>
-              </div>
-            </form>
-          )}
+    <div className="flex min-h-screen bg-background">
+      <div className="relative hidden flex-1 items-center justify-center bg-muted lg:flex">
+        <img
+          src="/login-hero.jpg"
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover opacity-90"
+        />
+        <div className="relative z-10 max-w-md rounded-3xl bg-background/80 p-8 shadow-xl backdrop-blur">
+          <p className="text-sm uppercase tracking-widest text-muted-foreground">Welcome to</p>
+          <h2 className="mt-2 text-3xl font-semibold">NexusNote MCP</h2>
+          <p className="mt-4 text-sm text-muted-foreground">
+            Debate, search, and ideate with a companion tuned for thoughtful conversations.
+          </p>
         </div>
+      </div>
+
+      <div className="flex flex-1 items-center justify-center px-6 py-10 lg:px-10">
+        <Card className="w-full max-w-md shadow-2xl">
+          <CardHeader>
+            <CardTitle className="text-2xl">Sign in</CardTitle>
+            <CardDescription>Authenticate with your NexusNote account to continue.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {initializing ? (
+              <p className="text-sm text-muted-foreground">Checking your session…</p>
+            ) : (
+              <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium" htmlFor="username">
+                    Username
+                  </label>
+                  <Input
+                    id="username"
+                    name="username"
+                    type="text"
+                    autoComplete="username"
+                    required
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="you@example.com"
+                    aria-describedby={errorId}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium" htmlFor="password">
+                    Password
+                  </label>
+                  <Input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="••••••••"
+                    aria-describedby={errorId}
+                    disabled={loading}
+                  />
+                </div>
+                {combinedError ? (
+                  <p className="text-sm text-destructive" id={errorId} role="alert" aria-live="assertive">
+                    {combinedError}
+                  </p>
+                ) : null}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? 'Signing in…' : 'Sign in'}
+                </Button>
+              </form>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
