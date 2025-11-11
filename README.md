@@ -131,13 +131,15 @@ docker build -t mcp-server .
    aws apprunner pause-service --service-arn "$SERVICE_ARN"
    aws apprunner resume-service --service-arn "$SERVICE_ARN"
    ```
-   App Runner bills only while the service is running. Pausing is the easiest way to keep the monthly cost under a dollar when you only need the tooling a few hours per month.
+  App Runner bills only while the service is running. Pausing is the easiest way to keep the monthly cost under a dollar when you only need the tooling a few hours per month.
 
 6. **Teardown (optional)**
    ```bash
    cd mcp/infrastructure
-   npm run destroy
-   ```
+  npm run destroy
+  ```
+
+> **App Runner replacements:** App Runner service names must be unique. The stack explicitly sets the service name to `McpStack`, so when CloudFormation needs to *replace* (not update) the service it first tries to create a new one with the same name while the old one still exists. App Runner rejects that with “Service with the provided name already exists”. If you receive that error, delete the existing App Runner service named `McpStack` (console or `aws apprunner delete-service --service-arn ...`) and rerun the deploy. Normal in-place updates continue to work without manual steps.
 
 ## Useful Commands Summary
 
