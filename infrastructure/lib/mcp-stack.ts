@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { Duration, Stack, StackProps, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
+import { Duration, Stack, StackProps, CfnOutput, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import {
   aws_apprunner as apprunner,
   aws_dynamodb as dynamodb,
@@ -116,6 +116,10 @@ export class McpStack extends Stack {
   constructor(scope: Construct, id: string, props: McpStackProps) {
     super(scope, id, props);
 
+    Tags.of(this).add('Project', 'MCP');
+    Tags.of(this).add('Environment', 'Production');
+    Tags.of(this).add('CostOptimized', 'No');
+
     const cpu = props.cpu ?? 1024;
     const memoryLimitMiB = props.memoryLimitMiB ?? 2048;
     const servicePort = props.servicePort ?? 8080;
@@ -152,6 +156,8 @@ export class McpStack extends Stack {
 
       const chatTableConfig = `${chatTable.tableName}|sessionId|createdAt|userIndex|userId|lastMessageAt`;
       tableConfigEntries.push(chatTableConfig);
+
+      Tags.of(chatTable).add('EndResource', 'Backend');
     }
 
     const combinedTableConfig = tableConfigEntries.join(';');
@@ -310,6 +316,8 @@ export class McpStack extends Stack {
         unhealthyThreshold: 3,
       },
     });
+
+    Tags.of(service).add('EndResource', 'Backend');
 
     new CfnOutput(this, 'ServiceHttpsUrl', {
       value: service.attrServiceUrl,
