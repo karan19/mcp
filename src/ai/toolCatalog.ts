@@ -6,6 +6,10 @@ export interface ToolCatalogEntry {
   description: string;
 }
 
+/**
+ * Normalises tool definitions into a lighter-weight structure that is easier
+ * for LLM prompts to consume.
+ */
 export function buildToolCatalog(definitions: McpToolDefinition[]): ToolCatalogEntry[] {
   return definitions.map((tool) => ({
     id: tool.name,
@@ -14,6 +18,10 @@ export function buildToolCatalog(definitions: McpToolDefinition[]): ToolCatalogE
   }));
 }
 
+/**
+ * Formats the tool catalog for inclusion in a prompt. The output is a sorted
+ * bullet list so the model receives a predictable ordering.
+ */
 export function formatToolCatalog(entries: ToolCatalogEntry[]): string {
   if (entries.length === 0) {
     return 'No tools are available.';

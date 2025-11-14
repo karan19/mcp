@@ -57,6 +57,11 @@ interface ChatHistoryStore {
   searchMessagesForUser(userId: string, query: string, limit?: number): Promise<ChatSearchResult[]>;
 }
 
+/**
+ * Determines whether a DynamoDB item represents a conversation summary rather
+ * than an individual message. We support both sort-key based tables and tables
+ * that use an explicit `itemType` discriminator.
+ */
 function isSummaryItem(sortKeyName: string, item: Record<string, any>): boolean {
   if (!item) {
     return false;
@@ -67,6 +72,9 @@ function isSummaryItem(sortKeyName: string, item: Record<string, any>): boolean 
   return item.itemType === SUMMARY_ITEM_TYPE;
 }
 
+/**
+ * Stable fallback for environments that do not expose `crypto.randomUUID`.
+ */
 function cryptoRandomId() {
   try {
     return randomUUID();
@@ -75,6 +83,11 @@ function cryptoRandomId() {
   }
 }
 
+/**
+ * Builds a chat history store backed by DynamoDB. The implementation normalises
+ * slightly different table layouts so callers can work with a simple interface
+ * regardless of whether the table uses GSIs or a composite primary key.
+ */
 export function createChatHistoryStore(config: DynamoTableConfig): ChatHistoryStore {
   const { tableName, partitionKey } = config;
   const sortKeyName = config.sortKey ?? 'createdAt';
@@ -113,6 +126,10 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
   };
 
   return {
+    /**
+     * Fetches chronological chat messages for a session, excluding the summary
+     * item that shares the same partition key.
+     */
     async listMessages(sessionId, limit) {
       const response = await dynamoDocumentClient.send(
         new QueryCommand({
@@ -136,6 +153,10 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
         .map((item) => toMessage(item as Record<string, any>));
     },
 
+    /**
+     * Persists a chat message while protecting against accidental overwrites by
+     * asserting the primary key does not already exist.
+     */
     async putMessage(message) {
       const item: Record<string, unknown> = {
         [partitionKey]: message.sessionId,
@@ -157,6 +178,10 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
       await dynamoDocumentClient.send(command);
     },
 
+    /**
+     * Upserts the synthetic conversation summary row. We maintain redundant
+     * timestamps so clients can query by the most convenient index.
+     */
     async upsertSummary({ sessionId, userId, lastMessageAt, lastRole, lastMessagePreview, title }) {
       const now = new Date().toISOString();
       const key: Record<string, unknown> = {
@@ -241,6 +266,10 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
       );
     },
 
+    /**
+     * Lists summaries for a user, using a GSI when available and falling back to
+     * a filtered scan otherwise.
+     */
     async listSummariesForUser(userId, limit) {
       if (!gsiName || !gsiPartitionKey) {
         const response = await dynamoDocumentClient.send(
@@ -282,6 +311,10 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
       return items.map((item) => toSummary(item as Record<string, any>));
     },
 
+    /**
+     * Retrieves the cached summary row for a conversation or null when it does
+     * not exist.
+     */
     async getSummary(sessionId) {
       const key: Record<string, unknown> = {
         [partitionKey]: sessionId,
@@ -304,6 +337,9 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
       return toSummary(response.Item as Record<string, any>);
     },
 
+    /**
+     * Deletes an entire conversation after confirming the requester owns it.
+     */
     async deleteConversation(sessionId, userId) {
       const summary = await this.getSummary(sessionId);
       if (!summary) {
@@ -357,6 +393,11 @@ export function createChatHistoryStore(config: DynamoTableConfig): ChatHistorySt
       }
     },
 
+    /**
+     * Performs a naive scan-based search over a user's messages. Although this
+     * is not efficient for large datasets, it is acceptable for the small-scale
+     * usage expected during prototyping.
+     */
     async searchMessagesForUser(userId, query, limit = 20) {
       const normalizedQuery = query.trim().toLowerCase();
       if (!normalizedQuery) {

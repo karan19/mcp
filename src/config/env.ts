@@ -33,6 +33,12 @@ export interface EnvConfig {
 
 let localEnvLoaded = false;
 
+/**
+ * Lazily reads `.env.local` and merges key/value pairs into `process.env`. This
+ * mirrors the ergonomics of Next.js style local overrides so local development
+ * is easy, while still allowing environment variables to win when provided by
+ * the runtime.
+ */
 function loadLocalEnv() {
   if (localEnvLoaded) {
     return;
@@ -67,6 +73,10 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
+/**
+ * Reads a required environment variable and throws with a descriptive message
+ * if it is missing. Centralising this logic keeps the top-level loader tidy.
+ */
 function readRequiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -75,6 +85,10 @@ function readRequiredEnv(name: string): string {
   return value;
 }
 
+/**
+ * Reads a numeric environment variable, returning the provided fallback when
+ * the value is undefined and throwing if the variable cannot be parsed.
+ */
 function readNumberEnv(name: string, fallback: number): number {
   const value = process.env[name];
   if (!value) {
@@ -87,6 +101,11 @@ function readNumberEnv(name: string, fallback: number): number {
   return parsed;
 }
 
+/**
+ * Parses `MCP_DYNAMODB_TABLE_CONFIG` which is a semicolon separated list of
+ * table definitions. Each entry contains required table and partition key
+ * values followed by optional sort key and GSI metadata.
+ */
 function parseDynamoTableConfig(raw: string | undefined): DynamoTableConfig[] {
   if (!raw || !raw.trim()) {
     return [];
@@ -123,6 +142,11 @@ function parseDynamoTableConfig(raw: string | undefined): DynamoTableConfig[] {
     });
 }
 
+/**
+ * Loads the runtime configuration for the MCP server. This is the canonical
+ * translation layer between environment variables and strongly typed values
+ * used throughout the rest of the application.
+ */
 export function loadEnvConfig(): EnvConfig {
   const host = process.env.MCP_HOST ?? '0.0.0.0';
   const port = readNumberEnv('MCP_PORT', 8080);

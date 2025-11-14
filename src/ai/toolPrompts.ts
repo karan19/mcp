@@ -13,6 +13,10 @@ interface AnswerPromptOptions {
   toolOutput: string;
 }
 
+/**
+ * Builds the planner prompt that instructs the model to choose between calling
+ * a tool or replying directly.
+ */
 export function buildDecisionPrompt({ userMessage, historyTranscript, catalogText }: DecisionPromptOptions): string {
   const parts: string[] = [];
   if (historyTranscript) {
@@ -41,6 +45,10 @@ export function buildDecisionPrompt({ userMessage, historyTranscript, catalogTex
   return parts.join('\n');
 }
 
+/**
+ * Normalises tool outputs into a single string so the answer prompt remains
+ * concise.
+ */
 export function summarizeToolOutput(content: Array<{ type: string; text?: string }>): string {
   return content
     .map((item) => (typeof item.text === 'string' ? item.text : ''))
@@ -48,6 +56,10 @@ export function summarizeToolOutput(content: Array<{ type: string; text?: string
     .join('\n\n');
 }
 
+/**
+ * Builds the answer-generation prompt that instructs the model to cite the tool
+ * results while responding to the user.
+ */
 export function buildAnswerPrompt({ toolId, userMessage, historyTranscript, toolOutput }: AnswerPromptOptions): string {
   const lines: string[] = [`You requested tool "${toolId}" to help answer a question.`];
 

@@ -8,6 +8,11 @@ export interface VerifiedUser {
   payload: JWTPayload;
 }
 
+/**
+ * Creates a verifier that validates Cognito ID tokens against the user pool's
+ * JWKS. The returned function throws on invalid tokens and returns the relevant
+ * claims for downstream authorisation.
+ */
 export function createCognitoVerifier(config: CognitoConfig) {
   const issuer = `https://cognito-idp.${config.region}.amazonaws.com/${config.userPoolId}`;
   const jwks = createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`));

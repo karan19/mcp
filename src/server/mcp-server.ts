@@ -46,6 +46,10 @@ interface AuthenticatedUser {
   email?: string;
 }
 
+/**
+ * Lightweight error subclass used to propagate HTTP status codes from deep in
+ * the chat workflow back to the request handlers.
+ */
 class RequestError extends Error {
   status: number;
 
@@ -88,6 +92,10 @@ interface ChatIdentifiers {
   messageId: string;
 }
 
+/**
+ * Applies permissive CORS headers so the MCP UI can call into the server from
+ * any origin during local development.
+ */
 function applyCors(req: IncomingMessage | undefined, res: ServerResponse) {
   const requestOrigin = req?.headers?.origin;
   if (requestOrigin) {
@@ -110,6 +118,10 @@ function applyCors(req: IncomingMessage | undefined, res: ServerResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 }
 
+/**
+ * Serialises `payload` as JSON, writes it with the supplied status code, and
+ * handles the common headers needed by most routes.
+ */
 function sendJson(res: ServerResponse, status: number, payload: unknown) {
   const body = JSON.stringify(payload);
   res.statusCode = status;
@@ -118,10 +130,17 @@ function sendJson(res: ServerResponse, status: number, payload: unknown) {
   res.end(body);
 }
 
+/**
+ * Convenience wrapper that standardises the shape of JSON error responses.
+ */
 function sendErrorJson(res: ServerResponse, status: number, message: string) {
   sendJson(res, status, { error: message });
 }
 
+/**
+ * Reads and parses the JSON payload from a request, enforcing a small size
+ * limit to guard against accidental large uploads.
+ */
 async function readJsonBody(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -143,6 +162,10 @@ async function readJsonBody(req: IncomingMessage): Promise<any> {
   return JSON.parse(raw);
 }
 
+/**
+ * Sends the initial hello message defined by the MCP protocol when a websocket
+ * connection is established.
+ */
 function sendHelloMessage(socket: WebSocket) {
   const message = {
     type: 'hello',
@@ -157,6 +180,9 @@ function sendHelloMessage(socket: WebSocket) {
   socket.send(JSON.stringify(message));
 }
 
+/**
+ * Sends a well-formed MCP error payload back over the websocket connection.
+ */
 function sendError(socket: WebSocket, request: McpRequest, error: Error | string) {
   const errMsg = typeof error === 'string' ? error : error.message;
   const payload = {
@@ -167,6 +193,9 @@ function sendError(socket: WebSocket, request: McpRequest, error: Error | string
   socket.send(JSON.stringify(payload));
 }
 
+/**
+ * Serialises the local tool catalogue into the MCP `list_tools_result` payload.
+ */
 function sendListToolsResult(socket: WebSocket, request: ListToolsRequest) {
   const payload = {
     type: 'list_tools_result',
@@ -176,6 +205,10 @@ function sendListToolsResult(socket: WebSocket, request: ListToolsRequest) {
   socket.send(JSON.stringify(payload));
 }
 
+/**
+ * Handles `call_tool` MCP requests by delegating to the local registry and
+ * piping the result back across the websocket connection.
+ */
 async function handleCallTool(socket: WebSocket, request: CallToolRequest) {
   const entry = toolRegistry[request.toolName];
   if (!entry) {
@@ -201,6 +234,9 @@ async function handleCallTool(socket: WebSocket, request: CallToolRequest) {
   }
 }
 
+/**
+ * Simple ping/pong handler that keeps clients aware the connection is alive.
+ */
 function handlePing(socket: WebSocket, request: PingRequest) {
   socket.send(
     JSON.stringify({
@@ -210,6 +246,10 @@ function handlePing(socket: WebSocket, request: PingRequest) {
   );
 }
 
+/**
+ * Parses websocket frames into strongly typed MCP requests. Any parse errors
+ * are logged and surfaced to the caller as null so the frame can be ignored.
+ */
 function parseMessage(data: Buffer): McpRequest | null {
   try {
     const raw = JSON.parse(data.toString());
@@ -228,6 +268,11 @@ function parseMessage(data: Buffer): McpRequest | null {
   }
 }
 
+/**
+ * Creates the synchronous chat HTTP handler. The returned function validates
+ * authentication, persists the user message, orchestrates the model call, and
+ * finally stores the assistant reply before responding.
+ */
 function createChatHandler(
   context: ChatWorkflowContext,
   authenticate: (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null>
@@ -296,6 +341,10 @@ function createChatHandler(
   };
 }
 
+/**
+ * Creates the streaming chat HTTP handler. This version pipes incremental
+ * status updates and assistant deltas to the client using Server-Sent Events.
+ */
 function createChatStreamHandler(
   context: ChatWorkflowContext,
   authenticate: (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null>
@@ -419,6 +468,10 @@ function createChatStreamHandler(
     }
   };
 }
+/**
+ * Constructs the MCP HTTP and websocket server. Most dependencies are injected
+ * via `options` so the surrounding code can unit test individual pieces.
+ */
 export function createMcpServer(options: ServerOptions) {
   const { host, port, cognito, bedrock, chatTable } = options;
   const verifyToken = createCognitoVerifier(cognito);
@@ -644,6 +697,10 @@ export function createMcpServer(options: ServerOptions) {
   return { start };
 }
 
+/**
+ * Normalises the `Authorization` header name casing coming from Node's HTTP
+ * server and returns the first value when multiple headers are present.
+ */
 function getAuthorizationHeader(req: IncomingMessage): string | null {
   const header = req.headers.authorization ?? req.headers.Authorization;
   if (!header) {
@@ -652,6 +709,9 @@ function getAuthorizationHeader(req: IncomingMessage): string | null {
   return Array.isArray(header) ? header[0] : header;
 }
 
+/**
+ * Extracts the bearer token from a raw `Authorization` header value.
+ */
 function extractBearerToken(value: string | null): string | null {
   if (!value) {
     return null;
@@ -670,6 +730,10 @@ function extractBearerToken(value: string | null): string | null {
   return null;
 }
 
+/**
+ * Wraps the Cognito verifier with request/response handling so route handlers
+ * can authenticate requests with a single call.
+ */
 function createAuthenticator(
   verifyToken: (token: string) => Promise<VerifiedUser>
 ): (req: IncomingMessage, res: ServerResponse) => Promise<AuthenticatedUser | null> {
@@ -696,6 +760,10 @@ function createAuthenticator(
   };
 }
 
+/**
+ * Resolves the effective session and message identifiers, generating stable
+ * defaults when callers omit them.
+ */
 function resolveChatIdentifiers(userSub: string, sessionIdRaw?: string, messageIdRaw?: string): ChatIdentifiers {
   const sessionInput = sessionIdRaw?.trim() ?? '';
   const messageInput = messageIdRaw?.trim() ?? '';
@@ -724,6 +792,11 @@ interface ChatProcessingResult {
   assistantMessageAt: string;
 }
 
+/**
+ * Shared implementation that powers both the synchronous and streaming chat
+ * endpoints. The function persists the user message, orchestrates tool calls,
+ * stores the assistant response, and updates the conversation summary.
+ */
 async function processChatRequest(
   context: ChatWorkflowContext,
   payload: ChatRequestPayload,
@@ -839,6 +912,9 @@ async function processChatRequest(
   };
 }
 
+/**
+ * Normalises whitespace and truncates chat messages for summary displays.
+ */
 function buildMessagePreview(text: string, maxLength = 180): string {
   const trimmed = text.trim().replace(/\s+/g, ' ');
   if (!trimmed) {
@@ -853,6 +929,9 @@ function buildMessagePreview(text: string, maxLength = 180): string {
   return `${trimmed.slice(0, sliceLength).trimEnd()}...`;
 }
 
+/**
+ * Generates a sensible default conversation title from the first user message.
+ */
 function buildSessionTitle(text: string): string {
   const preview = buildMessagePreview(text, 80);
   if (!preview) {
@@ -861,6 +940,10 @@ function buildSessionTitle(text: string): string {
   return preview;
 }
 
+/**
+ * Attempts to generate a short conversational title using Bedrock. Failures are
+ * swallowed because summaries are a best-effort enhancement.
+ */
 async function safeGenerateSummary(
   bedrock: BedrockConfig,
   options: {
@@ -903,6 +986,10 @@ async function safeGenerateSummary(
   }
 }
 
+/**
+ * Parses list limits provided via query parameters and constrains them to a
+ * safe range for DynamoDB queries.
+ */
 function clampLimit(raw: string): number | undefined {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -912,6 +999,9 @@ function clampLimit(raw: string): number | undefined {
   return Math.min(Math.floor(parsed), 500);
 }
 
+/**
+ * Parses search limit parameters with sane defaults and bounds checking.
+ */
 function clampSearchLimit(raw: string): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -920,6 +1010,10 @@ function clampSearchLimit(raw: string): number {
   return Math.min(Math.max(1, Math.floor(parsed)), 100);
 }
 
+/**
+ * Produces a short snippet surrounding the query match in the stored message
+ * so search results remain contextual.
+ */
 function buildSearchSnippet(content: string, query: string, radius = 60): string {
   const normalizedContent = content.toLowerCase();
   const normalizedQuery = query.trim().toLowerCase();
@@ -940,6 +1034,10 @@ function buildSearchSnippet(content: string, query: string, radius = 60): string
   return `${prefix}${content.slice(start, end)}${suffix}`;
 }
 
+/**
+ * Wraps the Server-Sent Events plumbing in a tiny helper so the streaming
+ * handler can remain focused on business logic.
+ */
 function createSseChannel(req: IncomingMessage, res: ServerResponse, onClose?: () => void) {
   let closed = false;
 
