@@ -13,6 +13,10 @@ const toolMetrics = new Map<string, ToolMetricRecord>();
 const circuitState = new Map<string, boolean>();
 const emitEmf = (process.env.TOOL_METRICS_EMIT_EMF ?? '').toLowerCase() === 'true';
 
+/**
+ * Retrieves or initialises the metric bucket for a tool. Using a helper keeps
+ * the public API clean and ensures every code path records the same fields.
+ */
 function getMetricRecord(tool: string): ToolMetricRecord {
   let record = toolMetrics.get(tool);
   if (!record) {
@@ -33,6 +37,10 @@ function getMetricRecord(tool: string): ToolMetricRecord {
   return record;
 }
 
+/**
+ * Records the outcome of a tool invocation and, when enabled, emits the same
+ * data as an Embedded Metric Format payload for CloudWatch ingestion.
+ */
 export function recordToolMetric(options: {
   tool: string;
   status: ToolStatus;
@@ -61,6 +69,10 @@ export function recordToolMetric(options: {
   }
 }
 
+/**
+ * Emits an Embedded Metric Format JSON blob. Keeping this separate from
+ * {@link recordToolMetric} keeps the hot path minimal when EMF is disabled.
+ */
 function emitEmbeddedMetric(options: {
   tool: string;
   status: ToolStatus;
@@ -97,10 +109,19 @@ function emitEmbeddedMetric(options: {
   console.log(JSON.stringify(payload));
 }
 
+/**
+ * Tracks whether a tool's circuit breaker is open so the Prometheus exporter
+ * can represent the state alongside normal request metrics.
+ */
 export function setCircuitState(tool: string, isOpen: boolean) {
   circuitState.set(tool, isOpen);
 }
 
+/**
+ * Serialises all in-memory tool metrics to Prometheus exposition format. The
+ * output is intentionally explicit rather than using a helper library to keep
+ * the dependency surface minimal for the server environment.
+ */
 export function renderPrometheusMetrics(): string {
   const lines: string[] = [];
   lines.push('# HELP tool_request_total Count of tool invocations by status');

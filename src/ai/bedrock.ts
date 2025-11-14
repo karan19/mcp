@@ -14,6 +14,10 @@ interface InvokeOptions {
 
 let cachedClient: BedrockRuntimeClient | null = null;
 
+/**
+ * Provides a singleton Bedrock client for the process. Reusing the instance
+ * avoids the overhead of repeatedly establishing AWS SDK connections.
+ */
 function getClient(config: BedrockConfig) {
   if (!cachedClient) {
     cachedClient = new BedrockRuntimeClient({
@@ -23,6 +27,10 @@ function getClient(config: BedrockConfig) {
   return cachedClient;
 }
 
+/**
+ * Invokes a Bedrock model and returns the trimmed textual response. The helper
+ * normalises request payloads for the different model families we support.
+ */
 export async function invokeModel(config: BedrockConfig, options: InvokeOptions): Promise<string> {
   const client = getClient(config);
   const body = buildRequestPayload(config, options);
@@ -45,6 +53,10 @@ export interface StreamOptions extends InvokeOptions {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * Invokes a Bedrock model in streaming mode, forwarding deltas to the provided
+ * callback and returning the concatenated response once the stream ends.
+ */
 export async function invokeModelStream(config: BedrockConfig, options: StreamOptions): Promise<string> {
   if (!supportsStreamingModel(config.modelId)) {
     throw new Error(`Model ${config.modelId} does not support streaming responses.`);
@@ -96,6 +108,10 @@ export async function invokeModelStream(config: BedrockConfig, options: StreamOp
   return fullText.trim();
 }
 
+/**
+ * Separates system prompts from conversational turns because some Bedrock
+ * models expect system content as a standalone field.
+ */
 function splitMessages(messages: ChatMessage[]) {
   const systemParts: string[] = [];
   const conversation: ChatMessage[] = [];
@@ -115,6 +131,10 @@ function splitMessages(messages: ChatMessage[]) {
   return { systemPrompt, conversation };
 }
 
+/**
+ * Converts the Anthropic-style chat message format used across the codebase
+ * into the specific payload shape required by each supported Bedrock model.
+ */
 function buildRequestPayload(config: BedrockConfig, options: InvokeOptions) {
   const { systemPrompt, conversation } = splitMessages(options.messages);
   const maxTokens = options.maxOutputTokens ?? config.maxOutputTokens;
@@ -191,6 +211,11 @@ function buildRequestPayload(config: BedrockConfig, options: InvokeOptions) {
   throw new Error(`Unsupported Bedrock model: ${modelId}`);
 }
 
+/**
+ * Builds a simple plain text transcript used by models that do not support the
+ * richer message structure. Optional assistant tags cue the model to continue
+ * the dialogue.
+ */
 function buildPlaintextPrompt(
   systemPrompt: string | undefined,
   conversation: ChatMessage[],
@@ -214,6 +239,10 @@ function buildPlaintextPrompt(
   return lines.join('\n');
 }
 
+/**
+ * Normalises raw responses coming back from Bedrock so callers can treat all
+ * model families uniformly.
+ */
 function parseResponse(modelId: string, raw: string): string {
   const payload = JSON.parse(raw);
 
@@ -245,10 +274,17 @@ function parseResponse(modelId: string, raw: string): string {
   throw new Error('Unsupported Bedrock model response format.');
 }
 
+/**
+ * Indicates whether the configured model supports streaming inference.
+ */
 export function supportsStreamingModel(modelId: string): boolean {
   return modelId.startsWith('anthropic.');
 }
 
+/**
+ * Pulls incremental text from Bedrock streaming payloads. The schema differs
+ * across models so the helper centralises the decision tree.
+ */
 function extractStreamText(modelId: string, payload: any): string | null {
   if (modelId.startsWith('anthropic.')) {
     if (payload?.type === 'content_block_delta' && payload?.delta?.type === 'text_delta') {

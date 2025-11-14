@@ -53,6 +53,11 @@ export async function runChatTurn(options: RunChatTurnOptions): Promise<RunChatT
   return runChatTurnWithEvents(options);
 }
 
+/**
+ * Scans a free-form string for JSON object substrings. Model responses often
+ * contain explanatory prose around the JSON blob we asked for, so we fall back
+ * to this helper when fenced code blocks are missing.
+ */
 function extractJsonObjects(raw: string): string[] {
   const objects: string[] = [];
   let startIdx = raw.indexOf('{');
@@ -80,6 +85,11 @@ function extractJsonObjects(raw: string): string[] {
   return objects;
 }
 
+/**
+ * Parses the model's planner response into a structured decision. The logic is
+ * intentionally defensive because LLMs frequently decorate their output with
+ * code fences or multiple JSON snippets.
+ */
 function parseModelJsonResponse(raw: string): FirstPassDecision {
   const trimmed = raw.trim();
   let candidate = trimmed;
@@ -112,6 +122,12 @@ function parseModelJsonResponse(raw: string): FirstPassDecision {
   return parsed;
 }
 
+/**
+ * Runs a single end-to-end chat turn. The function is responsible for asking
+ * the planner whether to call a tool, invoking the tool when necessary, and
+ * finally asking the model to draft a user-visible reply. Optional hooks expose
+ * visibility into each step for logging or streaming.
+ */
 export async function runChatTurnWithEvents(
   options: RunChatTurnOptions,
   events?: RunChatTurnEvents,
