@@ -35,7 +35,69 @@ function createMessageId() {
 
 interface ParsedSseEvent {
   event: string;
-  data?: any;
+  data?: unknown;
+}
+
+interface AckData {
+  sessionId: string;
+}
+
+interface StatusData {
+  stage: string;
+}
+
+interface DecisionData {
+  action: string;
+  tool: string;
+}
+
+interface ToolCallData {
+  toolName?: string;
+  stage?: string;
+}
+
+interface AssistantDeltaData {
+  text: string;
+}
+
+interface AssistantMessageData {
+  messageId?: string;
+  content?: string;
+  createdAt?: string;
+  toolCalls?: unknown[];
+  sessionId?: string;
+}
+
+interface ErrorData {
+  message?: string;
+}
+
+function isAckData(data: unknown): data is AckData {
+  return typeof data === 'object' && data !== null && 'sessionId' in data;
+}
+
+function isStatusData(data: unknown): data is StatusData {
+  return typeof data === 'object' && data !== null && 'stage' in data;
+}
+
+function isDecisionData(data: unknown): data is DecisionData {
+  return typeof data === 'object' && data !== null && 'action' in data && 'tool' in data;
+}
+
+function isToolCallData(data: unknown): data is ToolCallData {
+  return typeof data === 'object' && data !== null;
+}
+
+function isAssistantDeltaData(data: unknown): data is AssistantDeltaData {
+  return typeof data === 'object' && data !== null && 'text' in data;
+}
+
+function isAssistantMessageData(data: unknown): data is AssistantMessageData {
+  return typeof data === 'object' && data !== null;
+}
+
+function isErrorData(data: unknown): data is ErrorData {
+  return typeof data === 'object' && data !== null;
 }
 
 export function useChatSession() {
@@ -205,94 +267,102 @@ export function useChatSession() {
       const handleEvent = (event: ParsedSseEvent) => {
         switch (event.event) {
           case 'ack':
-            if (typeof event.data?.sessionId === 'string') {
+            if (isAckData(event.data)) {
               setSessionId(event.data.sessionId);
             }
             setPendingStatus('Request received…');
             break;
           case 'status':
-            setPendingStatus(describeStage(event.data?.stage));
+            if (isStatusData(event.data)) {
+              setPendingStatus(describeStage(event.data.stage));
+            }
             break;
           case 'decision':
-            if (event.data?.action === 'call_tool' && event.data?.tool) {
+            if (isDecisionData(event.data) && event.data.action === 'call_tool') {
               setPendingStatus(`Planning tool ${event.data.tool}…`);
             }
             break;
           case 'tool_call': {
-            const toolName = event.data?.toolName ?? 'tool';
-            if (event.data?.stage === 'start') {
-              setPendingStatus(`Running ${toolName}…`);
-            } else if (event.data?.stage === 'complete') {
-              setPendingStatus(`Finished ${toolName}`);
+            if (isToolCallData(event.data)) {
+              const toolName = event.data.toolName ?? 'tool';
+              if (event.data.stage === 'start') {
+                setPendingStatus(`Running ${toolName}…`);
+              } else if (event.data.stage === 'complete') {
+                setPendingStatus(`Finished ${toolName}`);
+              }
             }
             break;
           }
           case 'assistant_delta': {
-            const deltaText = typeof event.data?.text === 'string' ? event.data.text : '';
-            if (!deltaText) {
-              break;
-            }
-            if (!streamingAssistantRef.current) {
-              const draftId = createMessageId();
-              streamingAssistantRef.current = draftId;
-              const draft: ChatMessage = {
-                id: draftId,
-                role: 'assistant',
-                content: deltaText,
-                createdAt: new Date().toISOString(),
-              };
-              setMessages((current) => [...current, draft]);
-            } else {
-              const targetId = streamingAssistantRef.current;
-              setMessages((current) =>
-                current.map((message) =>
-                  message.id === targetId
-                    ? { ...message, content: `${message.content}${deltaText}` }
-                    : message
-                )
-              );
+            if (isAssistantDeltaData(event.data)) {
+              const deltaText = event.data.text;
+              if (!deltaText) {
+                break;
+              }
+              if (!streamingAssistantRef.current) {
+                const draftId = createMessageId();
+                streamingAssistantRef.current = draftId;
+                const draft: ChatMessage = {
+                  id: draftId,
+                  role: 'assistant',
+                  content: deltaText,
+                  createdAt: new Date().toISOString(),
+                };
+                setMessages((current) => [...current, draft]);
+              } else {
+                const targetId = streamingAssistantRef.current;
+                setMessages((current) =>
+                  current.map((message) =>
+                    message.id === targetId
+                      ? { ...message, content: `${message.content}${deltaText}` }
+                      : message
+                  )
+                );
+              }
             }
             break;
           }
           case 'assistant_message': {
-            setPending(false);
-            setPendingStatus(null);
-            const assistantMessage: ChatMessage = {
-              id: typeof event.data?.messageId === 'string' ? event.data.messageId : createMessageId(),
-              role: 'assistant',
-              content: typeof event.data?.content === 'string' ? event.data.content : '',
-              createdAt: typeof event.data?.createdAt === 'string' ? event.data.createdAt : new Date().toISOString(),
-              toolCalls: Array.isArray(event.data?.toolCalls) ? (event.data.toolCalls as ToolCall[]) : undefined,
-            };
-            if (typeof event.data?.sessionId === 'string') {
-              setSessionId(event.data.sessionId);
-            }
-            setMessages((current) => {
-              const targetId = streamingAssistantRef.current;
-              if (targetId) {
-                let replaced = false;
-                const next = current.map((message) => {
-                  if (message.id === targetId) {
-                    replaced = true;
-                    return assistantMessage;
-                  }
-                  return message;
-                });
-                streamingAssistantRef.current = null;
-                return replaced ? next : [...next, assistantMessage];
+            if (isAssistantMessageData(event.data)) {
+              setPending(false);
+              setPendingStatus(null);
+              const assistantMessage: ChatMessage = {
+                id: typeof event.data.messageId === 'string' ? event.data.messageId : createMessageId(),
+                role: 'assistant',
+                content: typeof event.data.content === 'string' ? event.data.content : '',
+                createdAt: typeof event.data.createdAt === 'string' ? event.data.createdAt : new Date().toISOString(),
+                toolCalls: Array.isArray(event.data.toolCalls) ? (event.data.toolCalls as ToolCall[]) : undefined,
+              };
+              if (typeof event.data.sessionId === 'string') {
+                setSessionId(event.data.sessionId);
               }
-              return [...current, assistantMessage];
-            });
+              setMessages((current) => {
+                const targetId = streamingAssistantRef.current;
+                if (targetId) {
+                  let replaced = false;
+                  const next = current.map((message) => {
+                    if (message.id === targetId) {
+                      replaced = true;
+                      return assistantMessage;
+                    }
+                    return message;
+                  });
+                  streamingAssistantRef.current = null;
+                  return replaced ? next : [...next, assistantMessage];
+                }
+                return [...current, assistantMessage];
+              });
+            }
             break;
           }
           case 'error': {
             setPending(false);
             setPendingStatus(null);
             streamingAssistantRef.current = null;
-            const messageText =
-              typeof event.data?.message === 'string'
-                ? event.data.message
-                : 'The assistant could not process your request.';
+            let messageText = 'The assistant could not process your request.';
+            if (isErrorData(event.data) && typeof event.data.message === 'string') {
+              messageText = event.data.message;
+            }
             setError(messageText);
             setMessages((current) => [
               ...current,
