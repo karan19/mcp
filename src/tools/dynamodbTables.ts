@@ -11,53 +11,7 @@ function sanitizeToolName(tableName: string) {
   return tableName.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase();
 }
 
-const TABLE_DESCRIPTIONS: Record<string, string> = {
-  'nexusnote-before-i-forget-production':
-    'User reminders captured in “before I forget” flow.',
-  'nexusnote-chat-conversations-production':
-    'Stored chat conversations and their participants.',
-  'nexusnote-debate-sessions-production':
-    'Debate session metadata such as topic and status.',
-  'nexusnote-debate-turns-production':
-    'Individual debate turns within a session.',
-  'nexusnote-implementation-projects-production':
-    'Implementation projects assigned to a user.',
-  'nexusnote-inno-contacts-production':
-    'Innovation contacts and their latest updates.',
-  'nexusnote-notes-production':
-    'All notes captured per user.',
-  'nexusnote-personas-production':
-    'Configured AI personas per user.',
-  'nexusnote-shared-data-production':
-    'Shared mindmaps and their node data.',
-  'nexusnote-soliloquies-production':
-    'Recorded soliloquies mapped by user.',
-  'nexusnote-thought-tags-production':
-    'Thought tags, counts, and last-used info.',
-  'nexusnote-thoughts-production':
-    'Thought entries written by the user.',
-  'nexusnote-tracking-workboard-production':
-    'Tracking workboard slots, chains, and tasks.',
-  'GhostInfraStack-PostsTableC82B36F0-1OY982XQPEJ9X':
-    'Ghost CMS posts with rendered HTML content (keyed by slug).',
-};
 
-const TABLE_FRIENDLY_NAMES: Record<string, string> = {
-  'nexusnote-before-i-forget-production': 'Before I Forget Reminders',
-  'nexusnote-chat-conversations-production': 'Chat Conversations',
-  'nexusnote-debate-sessions-production': 'Debate Sessions',
-  'nexusnote-debate-turns-production': 'Debate Turns',
-  'nexusnote-implementation-projects-production': 'Implementation Projects',
-  'nexusnote-inno-contacts-production': 'Innovation Contacts',
-  'nexusnote-notes-production': 'Notes',
-  'nexusnote-personas-production': 'AI Personas',
-  'nexusnote-shared-data-production': 'Shared Mindmaps',
-  'nexusnote-soliloquies-production': 'Soliloquies',
-  'nexusnote-thought-tags-production': 'Thought Tags',
-  'nexusnote-thoughts-production': 'Thoughts',
-  'nexusnote-tracking-workboard-production': 'Tracking Workboard',
-  'GhostInfraStack-PostsTableC82B36F0-1OY982XQPEJ9X': 'Ghost Posts',
-};
 
 function defaultFriendlyName(tableName: string): string {
   const withoutPrefix = tableName.replace(/^nexusnote[-_]?/i, '');
@@ -71,10 +25,7 @@ function defaultFriendlyName(tableName: string): string {
 }
 
 function buildDescription(tableName: string, partitionKey: string, sortKey?: string) {
-  const custom = TABLE_DESCRIPTIONS[tableName];
-  if (custom) {
-    return custom;
-  }
+
   const base = `Query the DynamoDB table \\"${tableName}\\" using the ${partitionKey} partition key`;
   if (sortKey) {
     return `${base} and optional ${sortKey} sort key.`;
@@ -205,7 +156,7 @@ const dynamoTableTools: ToolEntry[] = envConfig.dynamodbTables.map((table) => {
   const toolName = `query.dynamodb.${sanitizeToolName(table.tableName)}`;
   const definition: McpToolDefinition = {
     name: toolName,
-    friendlyName: TABLE_FRIENDLY_NAMES[table.tableName] ?? defaultFriendlyName(table.tableName),
+    friendlyName: defaultFriendlyName(table.tableName),
     description: buildDescription(table.tableName, table.partitionKey, table.sortKey),
     inputSchema: buildSchema(table.partitionKey, table.sortKey),
   };
