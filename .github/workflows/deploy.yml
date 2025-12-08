@@ -1,0 +1,62 @@
+name: Deploy MCP to AWS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write # Required for requesting the JWT
+  contents: read  # Required for actions/checkout
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Install Infrastructure Dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: CDK Bootrap (if needed)
+        working-directory: infrastructure
+        run: npx cdk bootstrap
+        env:
+          # Pass through potential env vars if needed by your stack
+          COGNITO_REGION: ${{ secrets.COGNITO_REGION }}
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.COGNITO_USER_POOL_CLIENT_ID }}
+
+      - name: Deploy CDK Stack
+        working-directory: infrastructure
+        run: npm run deploy -- --require-approval never
+        env:
+          # CDK deployment needs these to synthesize the stack template
+          MCP_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          MCP_REGION: ${{ secrets.AWS_REGION }}
+          # App Environment Variables (secrets injected into the container or used by CDK)
+          MCP_COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          MCP_COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.COGNITO_USER_POOL_CLIENT_ID }}
+          MCP_BEDROCK_MODEL_ID: ${{ secrets.BEDROCK_MODEL_ID }}
+          MCP_SERPAPI_SECRET_NAME: ${{ secrets.SERPAPI_SECRET_NAME }}
+          # Add other required environment variables here
